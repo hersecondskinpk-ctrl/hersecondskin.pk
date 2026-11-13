@@ -1,4 +1,134 @@
 
+let currentProductPage = 1;
+const PRODUCTS_PER_PAGE = 20;
+let lastSeenOrderId = null;
+let orderAudioCtx = null;
+let orderNotificationTimer = null;
+
+function playOrderChime() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    if (!orderAudioCtx) orderAudioCtx = new AudioContext();
+    if (orderAudioCtx.state === 'suspended') {
+      orderAudioCtx.resume();
+    }
+    const t = orderAudioCtx.currentTime;
+    const osc1 = orderAudioCtx.createOscillator();
+    const gain1 = orderAudioCtx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(659.25, t);
+    osc1.frequency.exponentialRampToValueAtTime(830.61, t + 0.15);
+    gain1.gain.setValueAtTime(0.25, t);
+    gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    osc1.connect(gain1);
+    gain1.connect(orderAudioCtx.destination);
+    osc1.start(t);
+    osc1.stop(t + 0.55);
+
+    const osc2 = orderAudioCtx.createOscillator();
+    const gain2 = orderAudioCtx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1046.50, t + 0.18);
+    gain2.gain.setValueAtTime(0.2, t + 0.18);
+    gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+    osc2.connect(gain2);
+    gain2.connect(orderAudioCtx.destination);
+    osc2.start(t + 0.18);
+    osc2.stop(t + 0.75);
+  } catch(e) {
+    console.warn('Audio chime error:', e);
+  }
+}
+
+function showAdminToast(msg) {
+  const container = $('admin-toast-container') || document.body;
+  const toast = document.createElement('div');
+  toast.style.cssText = 'background:#4a1525;color:#fff;padding:12px 18px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.22);font-size:13px;font-weight:600;display:flex;align-items:center;gap:10px;border-left:4px solid #ad7b28;animation:slideIn 0.3s ease;pointer-events:auto;';
+  toast.innerHTML = `<span>${esc(msg)}</span><button style="background:transparent;border:0;color:#fff;font-size:16px;cursor:pointer;margin-left:8px;" onclick="this.parentElement.remove()">×</button>`;
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentElement) toast.remove(); }, 6000);
+}
+
+function notifyNewOrder(order) {
+  playOrderChime();
+  showAdminToast(`🔔 Naya Order Aaya! #${order.order_number} (${formatPKR(order.total)}) by ${order.customer_name}`);
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification(`New Order #${order.order_number}`, {
+        body: `${order.customer_name} placed an order for ${formatPKR(order.total)}`,
+        icon: '/brand-logo.jpg'
+      });
+    } catch(_) {}
+  }
+}
+
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+document.addEventListener('click', requestNotificationPermission, { once: true });
+
+function startOrderPolling() {
+  if (orderNotificationTimer) clearInterval(orderNotificationTimer);
+  orderNotificationTimer = setInterval(async () => {
+    if (document.cookie.includes('hss_admin')) {
+      try {
+        const d = await api('/api/dashboard');
+        if (d && d.recentOrders && d.recentOrders.length) {
+          const latest = d.recentOrders[0];
+          if (lastSeenOrderId !== null && latest.id !== lastSeenOrderId) {
+            notifyNewOrder(latest);
+            if (currentTab === 'overview') loadDashboard();
+            if (currentTab === 'orders') loadOrders();
+          }
+          lastSeenOrderId = latest.id;
+        }
+      } catch(_) {}
+    }
+  }, 30000);
+}
+startOrderPolling();
+
+window.changeProductPage = function(p) {
+  currentProductPage = p;
+  renderProductsTable();
+};
+
+window.deleteProductPermanently = async function(id, name) {
+  if (!confirm(`Are you sure you want to PERMANENTLY delete "${name}"?\n\nThis will remove the product, all its variants, images, and reviews completely from the database.\n\nThis action CANNOT be undone.`)) return;
+  try {
+    const res = await api('/api/products/' + id, { method: 'DELETE' });
+    showAdminToast(res.message || 'Product deleted permanently.');
+    await Promise.all([loadProducts(), loadDashboard()]);
+  } catch(e) {
+    alert(e.message);
+  }
+};
+
+window.archiveProduct = async function(id) {
+  if (!confirm('Archive this product? It will stop appearing in the store but its order/sales history will remain.')) return;
+  try {
+    await api('/api/products/' + id + '/archive', { method: 'POST' });
+    showAdminToast('Product archived.');
+    await Promise.all([loadProducts(), loadDashboard()]);
+  } catch(e) {
+    alert(e.message);
+  }
+};
+
+window.unarchiveProduct = async function(id) {
+  try {
+    await api('/api/products/' + id + '/restore', { method: 'POST' });
+    showAdminToast('Product restored to active store.');
+    await Promise.all([loadProducts(), loadDashboard()]);
+  } catch(e) {
+    alert(e.message);
+  }
+};
+
+
 const $=id=>document.getElementById(id);let editingGallery=[];let editingVideos=[];const formatPKR=n=>'PKR '+Number(n||0).toLocaleString('en-PK');let products=[],orders=[],sales=[],movements=[],currentTab='overview',editingVariants=[];const CATS={bras:'Bras',panties:'Panties',sets:'Bra & Panty Sets',accessories:'Accessories','body-shaper':'Body Shaper',camisole:'Camisole'};const STATUS={pending:'Pending',confirmed:'Confirmed',processing:'Processing',shipped:'Shipped',delivered:'Delivered',cancelled:'Cancelled'};
 async function api(url,options={}){const res=await fetch(url,{credentials:'same-origin',...options,headers:{...(options.body?{'Content-Type':'application/json'}:{}),...(options.headers||{})}});let data={};try{data=await res.json()}catch{}if(!res.ok)throw new Error(data.error||`Request failed (${res.status})`);return data}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function setMessage(id,msg,ok=false){$(id).textContent=msg;$(id).style.color=ok?'var(--green)':'var(--red)'}
@@ -23,9 +153,128 @@ async function reviewDelete(id){if(!confirm('Delete this review permanently?'))r
 /* end HSS REVIEWS v1 */
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
 async function refreshAll(){await Promise.allSettled([loadDashboard(),loadProducts(),loadOrders(),loadSales(),loadMovements()])}
-async function loadDashboard(){try{const d=await api('/api/dashboard');const c=d.counts;$('dashboard-stats').innerHTML=[['Active products',c.activeProducts,'products listed'],['Units in stock',c.unitsInStock,'across active variants'],['Open orders',c.openOrders,'not delivered/cancelled'],['Sales this month',formatPKR(c.monthSales),`${c.monthDeliveredOrders} delivered order(s)`],['Est. profit',formatPKR(c.monthEstimatedProfit),'before other expenses'],['Low stock',c.lowStockVariants,'variants with 1–3 units'],['Out of stock',c.outOfStockVariants,'active variants at zero'],['Collected',formatPKR(c.monthCollected),'including delivery fees']].map(x=>`<div class="stat"><div class="stat-label">${esc(x[0])}</div><div class="stat-value">${typeof x[1]==='number'&&x[1]>999?Number(x[1]).toLocaleString():esc(x[1])}</div><div class="stat-note">${esc(x[2])}</div></div>`).join('');$('recent-orders').innerHTML=d.recentOrders.length?`<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>${d.recentOrders.map(o=>`<tr><td><strong>${esc(o.order_number)}</strong><small>${new Date(o.created_at).toLocaleDateString()}</small></td><td>${esc(o.customer_name)}</td><td>${formatPKR(o.total)}</td><td><span class="pill ${o.status}">${STATUS[o.status]||esc(o.status)}</span></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">ابھی کوئی آرڈر موجود نہیں۔</div>';$('low-stock-list').innerHTML=d.lowStock.length?d.lowStock.map(v=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid #f2e8eb;padding:10px 0;font-size:12px"><span><b>${esc(v.productName)}</b><small style="display:block;color:var(--muted);margin-top:4px">${esc(v.color)} · ${esc(v.size)} · ${esc(v.sku)}</small></span><div style="display:flex;align-items:center;gap:8px"><b class="${v.stock===0?'metric-bad':'metric-warn'}">${v.stock} left</b><button type="button" class="btn outline small" style="padding:4px 9px;font-size:11px" onclick="editProduct('${v.productId}')">Edit</button></div></div>`).join(''):'<div class="empty">فی الحال کوئی کم اسٹاک والا variant نہیں۔</div>'}catch(e){toastError(e)}}
+async function loadDashboard(){
+  try{
+    const d=await api('/api/dashboard');
+    const c=d.counts;
+    $('dashboard-stats').innerHTML=[
+      ['Active products',c.activeProducts,'products listed'],
+      ['Units in stock',c.unitsInStock,'across active variants'],
+      ['Open orders',c.openOrders,'not delivered/cancelled'],
+      ['Sales this month',formatPKR(c.monthSales),`${c.monthDeliveredOrders} delivered order(s)`],
+      ['Est. profit',formatPKR(c.monthEstimatedProfit),'before other expenses'],
+      ['Low stock',c.lowStockVariants,'variants with 1–3 units'],
+      ['Out of stock',c.outOfStockVariants,'active variants at zero'],
+      ['Collected',formatPKR(c.monthCollected),'including delivery fees']
+    ].map(x=>`<div class="stat"><div class="stat-label">${esc(x[0])}</div><div class="stat-value">${typeof x[1]==='number'&&x[1]>999?Number(x[1]).toLocaleString():esc(x[1])}</div><div class="stat-note">${esc(x[2])}</div></div>`).join('');
+
+    const healthyVariants = c.healthyVariants !== undefined ? c.healthyVariants : Math.max(0, (c.totalVariants || 0) - c.lowStockVariants - c.outOfStockVariants);
+    const stockBox = $('stock-health-card-body');
+    if (stockBox) {
+      stockBox.innerHTML = `
+        <div style="padding:14px;border-radius:12px;background:#f9fafb;border:1px solid #e5e7eb;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#4b5563;letter-spacing:0.5px;">Total Units in Stock</div>
+          <div style="font-size:26px;font-weight:800;color:#111827;margin-top:6px;">${Number(c.unitsInStock).toLocaleString()}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:4px;">Across all active variants</div>
+        </div>
+        <div style="padding:14px;border-radius:12px;background:#f0fdf4;border:1px solid #bbf7d0;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#15803d;letter-spacing:0.5px;">Healthy Stock</div>
+          <div style="font-size:26px;font-weight:800;color:#166534;margin-top:6px;">${Number(healthyVariants).toLocaleString()}</div>
+          <div style="font-size:11px;color:#15803d;margin-top:4px;">Variants with 4+ units available</div>
+        </div>
+        <div style="padding:14px;border-radius:12px;background:#fffbeb;border:1px solid #fde68a;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#b45309;letter-spacing:0.5px;">Low Stock Alert</div>
+          <div style="font-size:26px;font-weight:800;color:#92400e;margin-top:6px;">${Number(c.lowStockVariants).toLocaleString()}</div>
+          <div style="font-size:11px;color:#b45309;margin-top:4px;">Variants with 1–3 units left</div>
+        </div>
+        <div style="padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#b91c1c;letter-spacing:0.5px;">Out of Stock</div>
+          <div style="font-size:26px;font-weight:800;color:#991b1b;margin-top:6px;">${Number(c.outOfStockVariants).toLocaleString()}</div>
+          <div style="font-size:11px;color:#b91c1c;margin-top:4px;">Active variants at zero units</div>
+        </div>
+      `;
+    }
+
+    if (d.recentOrders && d.recentOrders.length) {
+      const latest = d.recentOrders[0];
+      if (lastSeenOrderId !== null && latest.id !== lastSeenOrderId) {
+        notifyNewOrder(latest);
+      }
+      lastSeenOrderId = latest.id;
+    }
+
+    $('recent-orders').innerHTML=d.recentOrders.length?`<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>${d.recentOrders.map(o=>`<tr><td><strong>${esc(o.order_number)}</strong><small>${new Date(o.created_at).toLocaleDateString()}</small></td><td>${esc(o.customer_name)}</td><td>${formatPKR(o.total)}</td><td><span class="pill ${o.status}">${STATUS[o.status]||esc(o.status)}</span></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">ابھی کوئی آرڈر موجود نہیں۔</div>';
+    $('low-stock-list').innerHTML=d.lowStock.length?d.lowStock.map(v=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid #f2e8eb;padding:10px 0;font-size:12px"><span><b>${esc(v.productName)}</b><small style="display:block;color:var(--muted);margin-top:4px">${esc(v.color)} · ${esc(v.size)} · ${esc(v.sku)}</small></span><div style="display:flex;align-items:center;gap:8px"><b class="${v.stock===0?'metric-bad':'metric-warn'}">${v.stock} left</b><button type="button" class="btn outline small" style="padding:4px 9px;font-size:11px" onclick="editProduct('${v.productId}')">Edit</button></div></div>`).join(''):'<div class="empty">فی الحال کوئی کم اسٹاک والا variant نہیں۔</div>'
+  }catch(e){toastError(e)}
+}
 async function loadProducts(){try{const d=await api('/api/products?admin=1');products=d.products;renderProductsTable();populateVariantSelect();}catch(e){toastError(e)}}
-function renderProductsTable(){const q=($('product-search')?.value||'').toLowerCase();const f=$('product-filter')?.value||'all';let items=products.filter(p=>{if(f==='inactive'&&p.active)return false;if(f!=='all'&&f!=='inactive'&&p.category!==f)return false;const hay=[p.name,p.description,p.category,...p.variants.map(v=>`${v.sku} ${v.color} ${v.size}`)].join(' ').toLowerCase();return hay.includes(q)});if(!items.length){$('products-table').innerHTML='<div class="empty">کوئی پروڈکٹ نہیں ملی۔ Add Product سے پہلی انوینٹری شامل کریں۔</div>';return}$('products-table').innerHTML=`<table><thead><tr><th>Product</th><th>Category</th><th>Price / Cost</th><th>Variants</th><th>Total stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>${items.map(p=>`<tr><td><div class="product-cell">${p.image_url?`<img class="thumb" src="${esc(p.image_url)}" alt="">`:'<div class="no-img">HSS</div>'}<div><strong>${esc(p.name)}</strong><small>${p.variants.filter(v=>v.active).length} active variant(s)</small></div></div></td><td>${esc(CATS[p.category]||p.category)}</td><td><strong>${formatPKR(p.price)}</strong><small>Cost ${formatPKR(p.costPrice)}</small></td><td>${p.variants.filter(v=>v.active).length}</td><td><strong>${p.variants.filter(v=>v.active).reduce((s,v)=>s+v.stock,0)}</strong></td><td><span class="pill ${p.active?'delivered':'cancelled'}">${p.active?'Active':'Archived'}</span></td><td><div class="tools"><button class="btn light small" onclick="editProduct('${p.id}')">Edit</button>${p.active?`<button class="btn danger small" onclick="archiveProduct('${p.id}')">Archive</button>`:''}</div></td></tr>`).join('')}</tbody></table>`}
+function renderProductsTable(){
+  const q=($('product-search')?.value||'').toLowerCase();
+  const f=$('product-filter')?.value||'all';
+  let items=products.filter(p=>{
+    if(f==='inactive'&&p.active)return false;
+    if(f!=='all'&&f!=='inactive'&&p.category!==f)return false;
+    const hay=[p.name,p.description,p.category,...p.variants.map(v=>`${v.sku} ${v.color} ${v.size}`)].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  if(!items.length){
+    $('products-table').innerHTML='<div class="empty">کوئی پروڈکٹ نہیں ملی۔ Add Product سے پہلی انوینٹری شامل کریں۔</div>';
+    return;
+  }
+  const totalPages = Math.ceil(items.length / PRODUCTS_PER_PAGE) || 1;
+  if (currentProductPage > totalPages) currentProductPage = totalPages;
+  if (currentProductPage < 1) currentProductPage = 1;
+  const pageItems = items.slice((currentProductPage - 1) * PRODUCTS_PER_PAGE, currentProductPage * PRODUCTS_PER_PAGE);
+
+  $('products-table').innerHTML=`<table>
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th>Category</th>
+        <th>Price / Cost</th>
+        <th>Variants</th>
+        <th>Total stock</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${pageItems.map(p=>`<tr>
+        <td>
+          <div class="product-cell">
+            ${p.image_url?`<img class="thumb" src="${esc(p.image_url)}" alt="">`:'<div class="no-img">HSS</div>'}
+            <div>
+              <strong>${esc(p.name)}</strong>
+              <small>${p.variants.filter(v=>v.active).length} active variant(s)</small>
+            </div>
+          </div>
+        </td>
+        <td>${esc(CATS[p.category]||p.category)}</td>
+        <td><strong>${formatPKR(p.price)}</strong><small>Cost ${formatPKR(p.costPrice)}</small></td>
+        <td>${p.variants.filter(v=>v.active).length}</td>
+        <td><strong>${p.variants.filter(v=>v.active).reduce((s,v)=>s+v.stock,0)}</strong></td>
+        <td><span class="pill ${p.active?'delivered':'cancelled'}">${p.active?'Active':'Archived'}</span></td>
+        <td>
+          <div class="tools" style="display:flex;gap:5px;align-items:center;flex-wrap:nowrap;">
+            <button class="btn light small" onclick="editProduct('${p.id}')">Edit</button>
+            ${p.active
+              ?`<button class="btn light small" onclick="archiveProduct('${p.id}')">Archive</button>`
+              :`<button class="btn light small" style="color:var(--green);font-weight:700;" onclick="unarchiveProduct('${p.id}')">Restore</button>`}
+            <button class="btn danger small" style="background:#fee2e2;color:#b91c1c;font-weight:700;" onclick="deleteProductPermanently('${p.id}','${esc(p.name)}')">Delete</button>
+          </div>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+  <div class="pagination-bar" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid #f2e8eb;background:#fff;border-radius:0 0 12px 12px;margin-top:2px;">
+    <span style="font-size:12px;color:var(--muted)">Showing ${(currentProductPage - 1) * PRODUCTS_PER_PAGE + 1}–${Math.min(currentProductPage * PRODUCTS_PER_PAGE, items.length)} of ${items.length} products</span>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn light small" ${currentProductPage <= 1 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''} onclick="changeProductPage(${currentProductPage - 1})">← Previous</button>
+      <span style="font-size:12px;font-weight:700;color:var(--wine);padding:0 8px;">Page ${currentProductPage} of ${totalPages}</span>
+      <button class="btn light small" ${currentProductPage >= totalPages ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''} onclick="changeProductPage(${currentProductPage + 1})">Next →</button>
+    </div>
+  </div>`;
+}
 function populateVariantSelect(){const options=products.filter(p=>p.active).flatMap(p=>p.variants.filter(v=>v.active).map(v=>({id:v.id,label:`${p.name} · ${v.color} · ${v.size} · ${v.stock} left`,stock:v.stock})));$('adjust-variant').innerHTML=options.length?options.map(v=>`<option value="${v.id}">${esc(v.label)}</option>`).join(''):'<option value="">No variants</option>'}
 const HSS_SIZES=['22','31','32','34','36','38','40','42','44','46','48','50','52','54','58','S','M','L','XL','XXL','XXXL'];
 const HSS_CUPS=['','A','B','C','D','FF'];

@@ -297,11 +297,13 @@ function allProducts({ category = '', admin = false, includeInactive = false } =
 function inventoryCounts() {
   const p = db.prepare('SELECT COUNT(*) AS n FROM products WHERE active=1').get().n;
   const units = db.prepare('SELECT COALESCE(SUM(v.stock),0) AS n FROM variants v JOIN products p ON p.id=v.product_id WHERE p.active=1 AND v.active=1').get().n;
+  const totalVariants = db.prepare('SELECT COUNT(*) AS n FROM variants v JOIN products p ON p.id=v.product_id WHERE p.active=1 AND v.active=1').get().n;
   const pending = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE status IN ('pending','confirmed','processing','shipped')").get().n;
   const lowStock = db.prepare('SELECT COUNT(*) AS n FROM variants v JOIN products p ON p.id=v.product_id WHERE p.active=1 AND v.active=1 AND v.stock BETWEEN 1 AND 3').get().n;
   const outOfStock = db.prepare('SELECT COUNT(*) AS n FROM variants v JOIN products p ON p.id=v.product_id WHERE p.active=1 AND v.active=1 AND v.stock=0').get().n;
+  const healthyVariants = Math.max(0, Number(totalVariants) - Number(lowStock) - Number(outOfStock));
   const delivered = db.prepare("SELECT COALESCE(SUM(amount_collected),0) AS collected, COALESCE(SUM(merchandise_net),0) AS net, COALESCE(SUM(estimated_profit),0) AS profit, COUNT(*) AS n FROM sales WHERE substr(sold_at,1,7)=strftime('%Y-%m','now','localtime')").get();
-  return { activeProducts:Number(p), unitsInStock:Number(units), openOrders:Number(pending), lowStockVariants:Number(lowStock), outOfStockVariants:Number(outOfStock), monthSales:Number(delivered.net), monthCollected:Number(delivered.collected), monthEstimatedProfit:Number(delivered.profit), monthDeliveredOrders:Number(delivered.n) };
+  return { activeProducts:Number(p), unitsInStock:Number(units), totalVariants:Number(totalVariants), healthyVariants:Number(healthyVariants), openOrders:Number(pending), lowStockVariants:Number(lowStock), outOfStockVariants:Number(outOfStock), monthSales:Number(delivered.net), monthCollected:Number(delivered.collected), monthEstimatedProfit:Number(delivered.profit), monthDeliveredOrders:Number(delivered.n) };
 }
 function nextOrderNumber() {
   const d = new Date();
@@ -646,6 +648,39 @@ const server = http.createServer(async (req,res) => {
     if (route === '/api/products' && req.method === 'POST') {
       if(!requireAdmin(req,res))return;const body=await readJson(req);const product=saveProduct(body);return json(res,201,{product});
     }
+    let prodAction = route.match(/^\/api\/products\/([a-f0-9-]+)\/(archive|restore)$/i);
+    if(prodAction && req.method==='POST'){
+      if(!requireAdmin(req,res))return;
+      const pid=prodAction[1];
+      const act=prodAction[2].toLowerCase();
+      const existing=db.prepare('SELECT id,name FROM products WHERE id=?').get(pid);
+      if(!existing)return bad(res,404,'Product not found.');
+      const newActive = act === 'restore' ? 1 : 0;
+      const t=nowIso();
+      db.prepare('UPDATE products SET active=?,updated_at=? WHERE id=?').run(newActive,t,pid);
+      db.prepare('UPDATE variants SET active=?,updated_at=? WHERE product_id=?').run(newActive,t,pid);
+      return json(res,200,{ok:true, active:newActive, message:`Product "${existing.name}" ${act==='restore'?'restored':'archived'}.`});
+    }
+    let prodDel=route.match(/^\/api\/products\/([a-f0-9-]+)$/i);
+    if(prodDel && req.method==='DELETE'){
+      if(!requireAdmin(req,res))return;
+      const pid=prodDel[1];
+      const prod=db.prepare('SELECT id,name FROM products WHERE id=?').get(pid);
+      if(!prod)return bad(res,404,'Product not found.');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare('DELETE FROM product_reviews WHERE product_id=?').run(pid);
+        db.prepare('DELETE FROM product_images WHERE product_id=?').run(pid);
+        db.prepare('DELETE FROM product_videos WHERE product_id=?').run(pid);
+        db.prepare('DELETE FROM variants WHERE product_id=?').run(pid);
+        db.prepare('DELETE FROM products WHERE id=?').run(pid);
+        db.exec('COMMIT');
+        return json(res,200,{ok:true,message:`Product "${prod.name}" deleted permanently.`});
+      } catch(err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    }
     let rv=route.match(/^\/api\/products\/([a-f0-9-]+)\/reviews$/i);
     if(rv && req.method==='GET'){
       const pid=rv[1];
@@ -702,10 +737,7 @@ const server = http.createServer(async (req,res) => {
     if(match && req.method==='PATCH'){
       if(!requireAdmin(req,res))return;const body=await readJson(req);const product=saveProduct(body,match[1]);return json(res,200,{product});
     }
-    if(match && req.method==='DELETE'){
-      if(!requireAdmin(req,res))return;const existing=db.prepare('SELECT id FROM products WHERE id=?').get(match[1]);if(!existing)return bad(res,404,'Product not found.');
-      const t=nowIso();db.prepare('UPDATE products SET active=0,updated_at=? WHERE id=?').run(t,match[1]);db.prepare('UPDATE variants SET active=0,updated_at=? WHERE product_id=?').run(t,match[1]);return json(res,200,{ok:true});
-    }
+    // Product delete & archive handled via explicit endpoints
     if(route==='/api/dashboard'&&req.method==='GET'){
       if(!requireAdmin(req,res))return;
       const recentOrders=db.prepare('SELECT id,order_number,customer_name,phone,total,status,created_at FROM orders ORDER BY created_at DESC LIMIT 8').all().map(o=>({...o,total:Number(o.total)}));
