@@ -4,13 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Her Second Skin PK | Lingerie</title>
-  <link rel="icon" type="image/jpeg" href="brand-logo.jpg">
-  <link rel="apple-touch-icon" href="brand-logo.jpg">
-  <link rel="stylesheet" href="/hss-fonts.css">
   <meta name="description" content="Discover bras, panties, matching sets, accessories and shapewear from Her Second Skin PK. Comfort, confidence and discreet delivery across Pakistan.">
-  <link rel="stylesheet" href="/css/common.css">
-  <link rel="stylesheet" href="/css/home.css">
   
+  
+  <link rel="stylesheet" href="/hss-fonts.css">
+  <link rel="stylesheet" href="/css/home.css">
 </head>
 <body>
 
@@ -193,10 +191,10 @@
         <div class="form-group"><label for="cust-address">Complete Address & City</label><textarea id="cust-address" autocomplete="street-address" placeholder="House #, Street, Area, City"></textarea></div>
       </div>
       <div class="cart-promo-line">
-        <input id="promo-code" type="text" aria-label="Promo code" placeholder="Enter promo code" autocapitalize="characters">
+        <input id="promo-code" type="text" aria-label="Promo code" placeholder="Enter promo code (HSS10 / HSS20)" autocapitalize="characters">
         <button type="button" onclick="applyPromoCode()">Apply</button>
       </div>
-      <div id="promo-status" class="coupon-status cart-promo-status"></div>
+      <div id="promo-status" class="coupon-status cart-promo-status">Try HSS10 or HSS20 on selected items.</div>
     </div>
     <div class="drawer-footer cart-sticky-footer">
       <div class="cart-price-summary">
@@ -256,15 +254,7 @@
     <h1>Feel Confident.<br>Every Day.</h1>
     <p>Comfort that feels like a second skin.</p>
     <a href="#collection" class="hero-btn">Shop the Collection <span aria-hidden="true">→</span></a>
-    <div class="hero-note">Comfort, Confidence & Elegance</div></div>
-    <div class="hero-banner-wrapper" id="hero-banner-wrapper" style="display:none">
-      <a href="#collection" class="hero-banner-link" aria-label="Shop now - Her Second Skin PK: Comfort, Confidence & Elegance">
-        <picture class="hero-banner-picture" id="hero-banner-picture">
-          <source id="hero-banner-source-mobile" media="(max-width: 600px)">
-          <img id="hero-banner-img" class="hero-banner-img" src="" alt="Her Second Skin PK - Comfort, Confidence & Elegance" fetchpriority="high" loading="eager" decoding="async">
-        </picture>
-      </a>
-    </div>
+    <div class="hero-note">Comfort, Confident, and Elegance.</div></div>
   </section>
 
   <!-- Perks / Trust Badges Bar -->
@@ -280,20 +270,20 @@
   <div class="boutique-reel-viewer" id="boutique-reel-viewer" role="dialog" aria-modal="true" aria-labelledby="boutique-reel-title" aria-hidden="true" onclick="if(event.target===this)closeBoutiqueReel()">
     <div class="boutique-reel-panel">
       <div class="boutique-reel-top"><strong id="boutique-reel-title">Watch Reel</strong><button type="button" class="boutique-reel-close" onclick="closeBoutiqueReel()" aria-label="Close video">×</button></div>
-      <video id="boutique-reel-player" controls playsinline preload="none" aria-label="Selected reel"></video>
+      <video id="boutique-reel-player" controls playsinline preload="metadata" aria-label="Selected reel"></video>
       <p id="boutique-reel-deal"></p><span class="boutique-reel-tip">Sound, playback and fullscreen controls are available in this viewer.</span>
     </div>
   </div>
 
 
   <h2 class="section-title" id="categories">Shop by Category</h2>
-  <div class="category-grid">
-    <div class="card" onclick="window.location.href='bras.html'"><img data-category-photo="bras" loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80" alt="Bras"><h3>Bras</h3></div>
-    <div class="card" onclick="window.location.href='panties.html'"><img data-category-photo="panties" loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1566174053879-31528523f8ae?auto=format&fit=crop&w=600&q=80" alt="Panties"><h3>Panties</h3></div>
-    <div class="card" onclick="window.location.href='sets.html'"><img data-category-photo="sets" loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80" alt="Sets"><h3>Sets</h3></div>
-    <div class="card" onclick="window.location.href='accessories.html'"><img data-category-photo="accessories" loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1521335629791-ce4aec67dd15?auto=format&fit=crop&w=600&q=80" alt="Accessories"><h3>Accessories</h3></div>
-    <div class="card" onclick="window.location.href='body-shaper.html'"><img data-category-photo="body-shaper" loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1566174053879-31528523f8ae?auto=format&fit=crop&w=600&q=80" alt="Body Shaper"><h3>Body Shaper</h3></div>
-    <div class="card" onclick="window.location.href='camisole.html'"><img data-category-photo="camisole" loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1551803091-e20673f15770?auto=format&fit=crop&w=600&q=80" alt="Camisole"><h3>Camisole</h3></div>
+  <div class="grid-container category-grid">
+    <div class="card" onclick="window.location.href='bras.html'"><img data-category-photo="bras" src="https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80" alt="Bras"><h3>Bras</h3></div>
+    <div class="card" onclick="window.location.href='panties.html'"><img data-category-photo="panties" src="https://images.unsplash.com/photo-1566174053879-31528523f8ae?auto=format&fit=crop&w=600&q=80" alt="Panties"><h3>Panties</h3></div>
+    <div class="card" onclick="window.location.href='sets.html'"><img data-category-photo="sets" src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80" alt="Sets"><h3>Sets</h3></div>
+    <div class="card" onclick="window.location.href='accessories.html'"><img data-category-photo="accessories" src="https://images.unsplash.com/photo-1521335629791-ce4aec67dd15?auto=format&fit=crop&w=600&q=80" alt="Accessories"><h3>Accessories</h3></div>
+    <div class="card" onclick="window.location.href='body-shaper.html'"><img data-category-photo="body-shaper" src="https://images.unsplash.com/photo-1566174053879-31528523f8ae?auto=format&fit=crop&w=600&q=80" alt="Body Shaper"><h3>Body Shaper</h3></div>
+    <div class="card" onclick="window.location.href='camisole.html'"><img data-category-photo="camisole" src="https://images.unsplash.com/photo-1551803091-e20673f15770?auto=format&fit=crop&w=600&q=80" alt="Camisole"><h3>Camisole</h3></div>
   </div>
 
   
@@ -301,7 +291,7 @@
   <div class="grid-container" id="product-grid">
     <!-- Product 1 -->
     <div class="card" data-category="sets" data-price="2199" data-name="Chic Seamless Push-Up Lingerie Set" onclick="openProductModal('Chic Seamless Push-Up Lingerie Set', 2199, 'https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80', ['https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80', 'https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80', 'https://images.unsplash.com/photo-1521335629791-ce4aec67dd15?auto=format&fit=crop&w=600&q=80'], 'Lettered Taping Contour Bra & Matching Hipster Panty 2-Piece Set. Designed for ultimate comfort and seamless elegance.')">
-      <img loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80" alt="Chic Seamless Push-Up Lingerie Set">
+      <img src="https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80" alt="Chic Seamless Push-Up Lingerie Set">
       <h3>Chic Seamless Push-Up Lingerie Set</h3>
       <div style="font-size:11.5px; color:#666; margin-bottom:4px; padding:0 8px;">Lettered Taping Contour Bra & Matching Hipster Panty</div>
       <div class="price">
@@ -315,7 +305,7 @@
 
     <!-- Product 2 -->
     <div class="card" data-category="sets" data-price="4500" data-name="Crimson Rose Bridal Lace Set" onclick="openProductModal('Crimson Rose Bridal Lace Set', 4500, 'https://images.unsplash.com/photo-1521335629791-ce4aec67dd15?auto=format&fit=crop&w=600&q=80', ['https://images.unsplash.com/photo-1521335629791-ce4aec67dd15?auto=format&fit=crop&w=600&q=80', 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80'], 'Exquisite bridal lace set crafted for your most special moments with premium soft threads.')">
-      <img loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1521335629791-ce4aec67dd15?auto=format&fit=crop&w=600&q=80" alt="Product">
+      <img src="https://images.unsplash.com/photo-1521335629791-ce4aec67dd15?auto=format&fit=crop&w=600&q=80" alt="Product">
       <h3>Crimson Rose Bridal Lace Set</h3>
       <div class="price">PKR 4,500</div>
       <div class="btn-group" onclick="event.stopPropagation()">
@@ -325,7 +315,7 @@
 
     <!-- Product 3 -->
     <div class="card" data-category="sets" data-price="5200" data-name="Silk Satin Honeymoon Nightgown" onclick="openProductModal('Silk Satin Honeymoon Nightgown', 5200, 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80', ['https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80', 'https://images.unsplash.com/photo-1566174053879-31528523f8ae?auto=format&fit=crop&w=600&q=80'], 'Luxurious pure silk satin nightgown designed for effortless elegance and buttery-soft feel.')">
-      <img loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80" alt="Product">
+      <img src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80" alt="Product">
       <h3>Silk Satin Honeymoon Nightgown</h3>
       <div class="price">PKR 5,200</div>
       <div class="btn-group" onclick="event.stopPropagation()">
@@ -335,7 +325,7 @@
 
     <!-- Product 4 -->
     <div class="card" data-category="bras" data-price="2200" data-name="Second Skin Seamless T-Shirt Bra" onclick="openProductModal('Second Skin Seamless T-Shirt Bra', 2200, 'https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80', ['https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80'], 'Everyday seamless T-shirt bra offering invisible comfort under any casual or formal wear.')">
-      <img loading="lazy" decoding="async" src="https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80" alt="Product">
+      <img src="https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80" alt="Product">
       <h3>Second Skin Seamless T-Shirt Bra</h3>
       <div class="price">PKR 2,200</div>
       <div class="btn-group" onclick="event.stopPropagation()">
@@ -398,9 +388,10 @@
   </footer>
 
   
-  <script src="/js/router.js"></script>
-  <script src="/js/state.js"></script>
+<script src="/inventory-store.js" defer></script>
+
+
+
   <script src="/js/home.js"></script>
-  <script src="/inventory-store.js" defer></script>
 </body>
 </html>

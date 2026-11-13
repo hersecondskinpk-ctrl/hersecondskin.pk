@@ -16,29 +16,11 @@
 
   function availableVariants(product) { return (product?.variants || []).filter(v => v.active !== false); }
   function getMainGrid() { return byId('product-grid'); }
-
-  const sizeRank = s => { const i = ['XXS','XS','S','M','L','XL','XXL','2XL','3XL','4XL'].indexOf(String(s).toUpperCase()); return i < 0 ? 100 : i; };
-  const sizeSort = (a, b) => (sizeRank(a) - sizeRank(b)) || String(a).localeCompare(String(b), undefined, {numeric:true});
-
-  function getUniqueSizesSummary(p) {
-    const vars = availableVariants(p);
-    const sizeSet = new Set();
-    vars.forEach(v => {
-      const s = String(v.size || '').trim();
-      if (s && s.toLowerCase() !== 'not available' && s.toLowerCase() !== 'default') {
-        sizeSet.add(s);
-      }
-    });
-    if (!sizeSet.size) return '';
-    const sorted = Array.from(sizeSet).sort(sizeSort);
-    return `Available Sizes: ${sorted.join(' · ')}`;
-  }
-
   function createHomeCard(p, index) {
-    const stock = Boolean(p.inStock ?? (Number(p.totalStock) > 0));
+    const stock = Number(p.totalStock || 0);
     const img = p.image_url || '';
     const cat = p.category;
-    const sizesSummary = getUniqueSizesSummary(p);
+    const variantSummary = availableVariants(p).map(v => `${v.color} ${v.size}`).join(' · ');
     const div = document.createElement('div');
     div.className = 'card';
     div.dataset.category = cat;
@@ -50,10 +32,10 @@
       <img src="${esc(img)}" alt="${esc(p.name)}" loading="lazy" onerror="this.style.opacity='.25';this.alt='Product image unavailable'">
       <div class="inventory-card-label">${esc(categoryLabels[cat] || cat)}</div>
       <h3>${esc(p.name)}</h3>
-      ${sizesSummary ? `<div class="inventory-card-variants">${esc(sizesSummary)}</div>` : ''}
+      <div class="inventory-card-variants">${esc(variantSummary || 'Variants will be updated soon')}</div>
       <div class="price">${money(p.price)}</div>
-      <div class="btn-group" onclick="event.stopPropagation()"><button class="card-btn" onclick="location.href='product.html?id=${p.id}'">${stock ? 'Select Options' : 'View Details'}</button></div>
-      <div class="inventory-stock-label ${stock ? '' : 'out'}">${stock ? 'In Stock' : 'Currently Out of Stock'}</div>`;
+      <div class="btn-group" onclick="event.stopPropagation()"><button class="card-btn" onclick="location.href='product.html?id=${p.id}'">${stock > 0 ? 'Select Options' : 'View Details'}</button></div>
+      <div class="inventory-stock-label ${stock > 0 ? '' : 'out'}">${stock > 0 ? `${stock} in stock` : 'Currently out of stock'}</div>`;
     div.addEventListener('click', () => { location.href = 'product.html?id=' + encodeURIComponent(p.id); });
     return div;
   }
@@ -83,6 +65,8 @@
   const saveWish = list => { try { localStorage.setItem(WISH_KEY, JSON.stringify(list)); } catch (e) {} updateWishBadges(); };
   const liveVariants = p => (p.variants || []).filter(v => v.active !== false && v.active !== 0);
   const discountPct = p => (Number(p.comparePrice) > Number(p.price)) ? Math.round((1 - Number(p.price) / Number(p.comparePrice)) * 100) : 0;
+  const sizeRank = s => { const i = ['XXS','XS','S','M','L','XL','XXL','2XL','3XL','4XL'].indexOf(String(s).toUpperCase()); return i < 0 ? 100 : i; };
+  const sizeSort = (a, b) => (sizeRank(a) - sizeRank(b)) || String(a).localeCompare(String(b), undefined, {numeric:true});
 
   function updateCartBadge() {
     let n = 0; try { n = (JSON.parse(localStorage.getItem(CART_KEY) || '[]') || []).reduce((a, i) => a + (Number(i.qty) || 0), 0); } catch (e) {}
@@ -242,12 +226,11 @@ main.grid .hss-card:hover{transform:none;box-shadow:none}
   };
 
   function cardHtml(p) {
-    const stock = Boolean(p.inStock ?? (Number(p.totalStock) > 0)); const pct = discountPct(p);
+    const stock = Number(p.totalStock || 0); const pct = discountPct(p);
     const urls = []; if (p.image_url) urls.push(p.image_url); (p.images || []).forEach(im => { if (im.url && !urls.includes(im.url)) urls.push(im.url); });
     const href = `product.html?id=${encodeURIComponent(p.id)}`;
     const wished = getWish().includes(p.id);
-    const sizesSummary = getUniqueSizesSummary(p);
-    return `<article class="product hss-card${stock ? '' : ' is-sold'}"><div class="hss-imgwrap"><a href="${href}" aria-label="${esc(p.name)}" style="position:absolute;inset:0;display:block"><img class="main" loading="lazy" src="${esc(urls[0] || '')}" alt="${esc(p.name)}" onerror="this.style.opacity='.25'">${urls[1] ? `<img class="alt" loading="lazy" src="${esc(urls[1])}" alt="">` : ''}</a>${pct && stock ? `<span class="hss-badge">-${pct}%</span>` : ''}${stock ? '' : '<span class="hss-badge sold">Sold out</span>'}<button type="button" class="hss-heart${wished ? ' on' : ''}" data-id="${esc(p.id)}" aria-label="Save to wishlist">${wished ? '♥' : '♡'}</button></div><div class="details"><h2><a href="${href}">${esc(p.name)}</a></h2>${sizesSummary ? `<div class="inventory-card-variants" style="margin:4px 0">${esc(sizesSummary)}</div>` : ''}<div class="price">${pct ? `<del>${money(p.comparePrice)}</del>` : ''}<span class="now${pct ? ' sale' : ''}">${money(p.price)}</span></div><div class="inventory-stock-label ${stock ? '' : 'out'}" style="margin-top:5px">${stock ? 'In Stock' : 'Currently Out of Stock'}</div></div></article>`;
+    return `<article class="product hss-card${stock ? '' : ' is-sold'}"><div class="hss-imgwrap"><a href="${href}" aria-label="${esc(p.name)}" style="position:absolute;inset:0;display:block"><img class="main" loading="lazy" src="${esc(urls[0] || '')}" alt="${esc(p.name)}" onerror="this.style.opacity='.25'">${urls[1] ? `<img class="alt" loading="lazy" src="${esc(urls[1])}" alt="">` : ''}</a>${pct && stock ? `<span class="hss-badge">-${pct}%</span>` : ''}${stock ? '' : '<span class="hss-badge sold">Sold out</span>'}<button type="button" class="hss-heart${wished ? ' on' : ''}" data-id="${esc(p.id)}" aria-label="Save to wishlist">${wished ? '♥' : '♡'}</button></div><div class="details"><h2><a href="${href}">${esc(p.name)}</a></h2><div class="price">${pct ? `<del>${money(p.comparePrice)}</del>` : ''}<span class="now${pct ? ' sale' : ''}">${money(p.price)}</span></div></div></article>`;
   }
 
   function drawCategory() {
@@ -348,7 +331,7 @@ main.grid .hss-card:hover{transform:none;box-shadow:none}
   function addStoreStyles() {
     if (byId('inventory-store-styles')) return;
     const style = document.createElement('style'); style.id='inventory-store-styles';
-    style.textContent = `@media(max-width:800px){.grid-container#product-grid,.grid-container:not(.category-grid),main.grid,.grid:not(.category-grid),.deal-grid,.recent-grid{grid-template-columns:1fr!important;padding:0 14px!important;gap:18px!important}#product-grid .card,.grid-container:not(.category-grid) .card,main.grid .product,main.grid .hss-card{width:100%!important;max-width:100%!important;margin:0 0 10px 0!important}#product-grid .card img,.grid-container:not(.category-grid) .card img,main.grid .product img,.hss-imgwrap{height:clamp(240px,70vw,380px)!important}.category-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:10px!important;padding:0 12px!important;max-width:100%!important}.category-grid .card{width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;padding:0!important;background:transparent!important;border:none!important;box-shadow:none!important}.category-grid .card img{width:100%!important;height:auto!important;aspect-ratio:1/1!important;border-radius:12px!important;object-fit:cover!important}.category-grid .card h3{font-size:11px!important;letter-spacing:.5px!important;margin:6px 0 0!important;padding:0!important}}.category-grid .card{background:transparent!important;border:none!important;box-shadow:none!important;padding:0!important;margin:0!important}.card,.product,.hss-card{min-width:0!important;box-sizing:border-box!important}.card img,.product img{width:100%!important;max-width:100%!important;box-sizing:border-box!important;display:block!important}.card h3,.product h2,.inventory-card-variants,.card .price,.product .price{max-width:100%!important;box-sizing:border-box!important;word-break:break-word!important;overflow-wrap:anywhere!important}.inventory-card-label{font-size:10px;color:#9b5670;letter-spacing:1px;text-transform:uppercase;margin-top:8px}.inventory-card-variants{font-size:11px;color:#776871;padding:0 8px 5px;line-height:1.4}.inventory-stock-label{font-size:11px;color:#357451;margin:5px 0 0}.inventory-stock-label.out{color:#b42318}.inventory-empty{grid-column:1/-1;padding:45px 22px;border:1px dashed #d8b6c2;border-radius:18px;background:#fffafb;text-align:center;max-width:760px;margin:10px auto;width:100%;color:#6f5862}.inventory-empty-icon{font-size:34px;color:#a33b5c}.inventory-empty h3{color:#4a1525;margin:7px 0}.inventory-empty p{line-height:1.6;font-size:13px}.inventory-modal-stock{font-size:12px;margin:6px 0 9px;color:#357451}.inventory-modal-stock.out{color:#b42318}.inventory-stock-warning{font-size:10px;line-height:1.4;color:#a33b5c;margin:3px 0 7px}`;
+    style.textContent = `.inventory-card-label{font-size:10px;color:#9b5670;letter-spacing:1px;text-transform:uppercase;margin-top:8px}.inventory-card-variants{font-size:11px;color:#776871;padding:0 8px 5px;line-height:1.4}.inventory-stock-label{font-size:11px;color:#357451;margin:5px 0 0}.inventory-stock-label.out{color:#b42318}.inventory-empty{grid-column:1/-1;padding:45px 22px;border:1px dashed #d8b6c2;border-radius:18px;background:#fffafb;text-align:center;max-width:760px;margin:10px auto;width:100%;color:#6f5862}.inventory-empty-icon{font-size:34px;color:#a33b5c}.inventory-empty h3{color:#4a1525;margin:7px 0}.inventory-empty p{line-height:1.6;font-size:13px}.inventory-modal-stock{font-size:12px;margin:6px 0 9px;color:#357451}.inventory-modal-stock.out{color:#b42318}.inventory-stock-warning{font-size:10px;line-height:1.4;color:#a33b5c;margin:3px 0 7px}`;
     document.head.appendChild(style);
   }
   function fillSelect(select, values, selected) {
@@ -373,9 +356,8 @@ main.grid .hss-card:hover{transform:none;box-shadow:none}
       if (button) button.disabled=true;
       return;
     }
-    const isAvail = (v.inStock !== false) && (Number(v.stock || 1) > 0);
-    if (note) {note.textContent = isAvail ? 'In Stock' : 'Currently out of stock for this colour and size.';note.classList.toggle('out', !isAvail);}
-    if (button) {button.disabled = !isAvail;button.textContent = isAvail ? 'Add to Cart 🛒' : 'Out of Stock';}
+    if (note) {note.textContent = Number(v.stock)>0 ? `Available stock: ${v.stock} piece(s) · SKU: ${v.sku}` : 'Currently out of stock for this colour and size.';note.classList.toggle('out',Number(v.stock)===0);}
+    if (button) {button.disabled = Number(v.stock) < 1;button.textContent=Number(v.stock)>0?'Add to Cart 🛒':'Out of Stock';}
   }
   function openProduct(id) {
     const p = inventoryProducts.find(x => x.id===id);
@@ -383,7 +365,7 @@ main.grid .hss-card:hover{transform:none;box-shadow:none}
     activeInventoryProduct=p; window.__hssActiveInventoryProduct=p;
     const sizes = [...new Set(availableVariants(p).map(v=>String(v.size)))];
     const colors = [...new Set(availableVariants(p).map(v=>String(v.color)))];
-    const defaultVariant = availableVariants(p).find(v=>(v.inStock!==false && Number(v.stock||1)>0)) || availableVariants(p)[0];
+    const defaultVariant = availableVariants(p).find(v=>Number(v.stock)>0) || availableVariants(p)[0];
     fillSelect(byId('modal-size'), sizes.length?sizes:['Not available'], defaultVariant?.size || 'Not available');
     fillSelect(byId('modal-color'), colors.length?colors:['Not available'], defaultVariant?.color || 'Not available');
     if (byId('inventory-modal-stock-note')) byId('inventory-modal-stock-note').remove();
@@ -406,16 +388,14 @@ main.grid .hss-card:hover{transform:none;box-shadow:none}
       if (!p || p.name !== name) return legacyAddToCartCustom(name, price);
       const v = variantsForSelection()[0];
       if (!v) { alert('This colour and size combination is not available.'); return; }
-      const isAvail = (v.inStock !== false) && (Number(v.stock || 1) > 0);
-      if (!isAvail) { alert('This colour and size combination is not available.'); return; }
       const same = window.cart ? window.cart.find(x=>x.variantId===v.id) : null;
       // The original store keeps its cart in a top-level let binding; it is readable here.
       const actualCart = typeof cart !== 'undefined' ? cart : [];
       const found = actualCart.find(x=>x.variantId===v.id);
       const existingQty = found ? found.qty : 0;
-      if (existingQty + 1 > 20) { alert('Maximum 20 items per order line.'); return; }
-      if (found) { found.qty += 1; found.selected = true; }
-      else actualCart.push({name:p.name,price:Number(p.price),size:v.size,color:v.color,qty:1,selected:true,productId:p.id,variantId:v.id,sku:v.sku,image:p.image_url||p.image||'',inventoryManaged:true});
+      if (Number(v.stock) < existingQty + 1) { alert(`Only ${v.stock} item(s) are in stock for ${v.color} / ${v.size}.`); return; }
+      if (found) found.qty += 1;
+      else actualCart.push({name:p.name,price:Number(p.price),size:v.size,color:v.color,qty:1,selected:false,productId:p.id,variantId:v.id,sku:v.sku,inventoryManaged:true});
       if (typeof window.renderCart==='function') window.renderCart();
       if (typeof window.openCartDrawer==='function') window.openCartDrawer();
     };
@@ -456,9 +436,8 @@ main.grid .hss-card:hover{transform:none;box-shadow:none}
     finally {window.__hssOrderInFlight=false;if(button){button.textContent='Buy Now — Selected Items';if(typeof cart!=='undefined')button.disabled=!cart.some(x=>x.selected);}}
   };
   function categoryCard(p) {
-    const stock = Boolean(p.inStock ?? (Number(p.totalStock) > 0));
-    const sizesSummary = getUniqueSizesSummary(p);
-    return `<article class="product"><img loading="lazy" src="${esc(p.image_url||'')}" alt="${esc(p.name)}" onerror="this.style.opacity='.25';this.alt='Product image unavailable'"><div class="details"><h2>${esc(p.name)}</h2>${sizesSummary ? `<div class="inventory-card-variants" style="margin:4px 0">${esc(sizesSummary)}</div>` : ''}<div class="price">${money(p.price)}</div><p class="inventory-stock-label ${stock?'':'out'}" style="margin:7px 0">${stock ? 'In Stock' : 'Currently Out of Stock'}</p>${stock?`<a class="btn" href="index.html?product=${encodeURIComponent(p.id)}#collection">Choose Options & Order</a>`:'<span class="btn" style="opacity:.7;display:inline-block">Out of stock</span>'}</div></article>`;
+    const stock = Number(p.totalStock || 0);
+    return `<article class="product"><img loading="lazy" src="${esc(p.image_url||'')}" alt="${esc(p.name)}" onerror="this.style.opacity='.25';this.alt='Product image unavailable'"><div class="details"><h2>${esc(p.name)}</h2><p>${esc(p.description||availableVariants(p).map(v=>`${v.color} / ${v.size}`).join(' · '))}</p><div class="price">${money(p.price)}</div><p style="font-size:12px;color:${stock?'#527b60':'#b42318'};margin:7px 0">${stock?`${stock} in stock`:'Currently out of stock'}</p>${stock?`<a class="btn" href="index.html?product=${encodeURIComponent(p.id)}#collection">Choose Options & Order</a>`:'<span class="btn" style="opacity:.7;display:inline-block">Out of stock</span>'}</div></article>`;
   }
   function renderBundlePlaceholder() {
     // No placeholder, admin link, or unverified bundle pricing on the public storefront.
@@ -482,8 +461,8 @@ main.grid .hss-card:hover{transform:none;box-shadow:none}
     const kept = [];
     saved.forEach(it => {
       const p = inventoryProducts.find(x => x.id === it.productId); if (!p) return;
-      const v = (p.variants || []).find(x => x.id === it.variantId && x.active !== false); if (!v || v.inStock === false || Number(v.stock || 1) < 1) return;
-      kept.push({name:p.name, price:Number(p.price), size:v.size, color:v.color, qty:Math.min(Math.max(1, Math.round(Number(it.qty) || 1)), 20), selected:!!it.selected, productId:p.id, variantId:v.id, sku:v.sku, image:p.image_url||it.image||'', inventoryManaged:true});
+      const v = (p.variants || []).find(x => x.id === it.variantId && x.active !== false); if (!v || Number(v.stock) < 1) return;
+      kept.push({name:p.name, price:Number(p.price), size:v.size, color:v.color, qty:Math.min(Math.max(1, Math.round(Number(it.qty) || 1)), Number(v.stock)), selected:!!it.selected, productId:p.id, variantId:v.id, sku:v.sku, inventoryManaged:true});
     });
     cart.splice(0, cart.length, ...kept);
     if (typeof window.renderCart === 'function') window.renderCart();

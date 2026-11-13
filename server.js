@@ -6,7 +6,6 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const zlib = require('node:zlib');
 const { DatabaseSync } = require('node:sqlite');
 
 const ROOT = __dirname;
@@ -17,7 +16,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const PORT = Number(process.env.PORT || 8787);
-const HOST = process.env.HOST || (process.env.FLY_APP_NAME || process.env.RENDER || process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+const HOST = process.env.HOST || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const sessions = new Map();
 const loginAttempts = new Map();
@@ -29,7 +28,7 @@ const MAX_PRODUCT_VIDEOS = 3;
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 
-const HOMEPAGE_DEFAULTS = {tagline:'Comfort, Confidence & Elegance',bannerUrl:'',bannerMobileUrl:'',bannerHeading:'',reels:[]};
+const HOMEPAGE_DEFAULTS = {tagline:'Comfort, Confident, and Elegance.',bannerUrl:'',bannerHeading:'',reels:[]};
 function homepageSettings(){
   const row=db.prepare('SELECT value FROM site_settings WHERE key=?').get('homepage');
   if(!row)return {...HOMEPAGE_DEFAULTS};
@@ -160,46 +159,6 @@ CREATE TABLE IF NOT EXISTS product_reviews(
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reviews_product ON product_reviews(product_id,status);
-
--- --- Category 3 Promo / Discount Manager Tables ---
-CREATE TABLE IF NOT EXISTS promo_codes (
-  id TEXT PRIMARY KEY,
-  code TEXT UNIQUE NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('percentage', 'fixed')),
-  value REAL NOT NULL CHECK(value > 0),
-  starts_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('draft', 'scheduled', 'active', 'paused', 'expired', 'exhausted', 'revoked')),
-  min_subtotal REAL NOT NULL DEFAULT 0,
-  max_discount REAL NOT NULL DEFAULT 0,
-  usage_limit INTEGER NOT NULL DEFAULT 0,
-  per_customer_limit INTEGER NOT NULL DEFAULT 1,
-  created_by TEXT NOT NULL DEFAULT 'admin',
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code);
-
-CREATE TABLE IF NOT EXISTS promo_redemptions (
-  id TEXT PRIMARY KEY,
-  promo_id TEXT NOT NULL REFERENCES promo_codes(id),
-  order_id TEXT UNIQUE NOT NULL REFERENCES orders(id),
-  customer_phone_hash TEXT NOT NULL,
-  amount REAL NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_promo_redemptions_promo ON promo_redemptions(promo_id);
-CREATE INDEX IF NOT EXISTS idx_promo_redemptions_phone ON promo_redemptions(customer_phone_hash);
-
-CREATE TABLE IF NOT EXISTS promo_audit (
-  id TEXT PRIMARY KEY,
-  promo_id TEXT NOT NULL,
-  admin_user TEXT NOT NULL,
-  action TEXT NOT NULL,
-  old_value TEXT,
-  new_value TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_promo_audit_promo ON promo_audit(promo_id);
 `);
 const reviewAttempts = new Map();
 const last10 = v => String(v||'').replace(/\D/g,'').slice(-10);
@@ -316,65 +275,16 @@ function skuFor(category) {
   const tag = ({bras:'BRA',panties:'PAN',sets:'SET',accessories:'ACC','body-shaper':'SHP',camisole:'CAM'})[category] || 'HSS';
   return `HSS-${tag}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
-function productRowToObject(row, includeInactive = false, admin = false) {
+function productRowToObject(row, includeInactive = false) {
   const variants = db.prepare(`SELECT id, product_id AS productId, sku, color, size, cup_size AS cupSize, stock, active FROM variants WHERE product_id=? ${includeInactive ? '' : 'AND active=1'} ORDER BY created_at, color, size`).all(row.id);
-  const realTotalStock = variants.reduce((sum, v) => sum + Number(v.stock), 0);
+  const totalStock = variants.reduce((sum, v) => sum + Number(v.stock), 0);
   const images = db.prepare('SELECT id, image_url AS url, color, sort_order AS sortOrder, is_primary AS isPrimary FROM product_images WHERE product_id=? ORDER BY is_primary DESC, sort_order, created_at').all(row.id).map(i=>({...i, isPrimary:Boolean(i.isPrimary)}));
   const videos = db.prepare('SELECT id, video_url AS url, sort_order AS sortOrder FROM product_videos WHERE product_id=? ORDER BY sort_order, created_at').all(row.id);
   // Legacy image_url remains the fallback and first image for older products.
   if (!images.length && row.image_url) images.push({id:'legacy-'+row.id,url:row.image_url,color:'',sortOrder:0,isPrimary:true});
   const galleryColors = [...new Set(images.map(i=>i.color).filter(Boolean))];
-
-  if (admin) {
-    return {
-      ...row,
-      active: Boolean(row.active),
-      price: Number(row.price),
-      costPrice: Number(row.cost_price),
-      comparePrice: Number(row.compare_price || 0),
-      totalStock: realTotalStock,
-      inStock: realTotalStock > 0,
-      images,
-      videos,
-      galleryColors,
-      variants: variants.map(v => ({
-        ...v,
-        stock: Number(v.stock),
-        inStock: Number(v.stock) > 0,
-        active: Boolean(v.active)
-      }))
-    };
-  }
-
-  // Public-facing response: omit wholesale costPrice and mask inventory counts to boolean presence
-  const publicObj = {
-    ...row,
-    active: Boolean(row.active),
-    price: Number(row.price),
-    comparePrice: Number(row.compare_price || 0),
-    totalStock: realTotalStock > 0 ? 1 : 0,
-    inStock: realTotalStock > 0,
-    images,
-    videos,
-    galleryColors,
-    variants: variants.map(v => {
-      const isAvail = Number(v.stock) > 0;
-      return {
-        id: v.id,
-        productId: v.productId,
-        sku: v.sku,
-        color: v.color,
-        size: v.size,
-        cupSize: v.cupSize,
-        stock: isAvail ? 1 : 0,
-        inStock: isAvail,
-        active: Boolean(v.active)
-      };
-    })
-  };
-  delete publicObj.cost_price;
-  delete publicObj.costPrice;
-  return publicObj;
+  return { ...row, active: Boolean(row.active), price: Number(row.price), costPrice: Number(row.cost_price), comparePrice: Number(row.compare_price || 0), totalStock, images, videos, galleryColors,
+    variants: variants.map(v => ({...v, stock:Number(v.stock), active:Boolean(v.active)})) };
 }
 function allProducts({ category = '', admin = false, includeInactive = false } = {}) {
   let sql = `SELECT * FROM products WHERE 1=1`;
@@ -382,7 +292,7 @@ function allProducts({ category = '', admin = false, includeInactive = false } =
   if (!includeInactive) sql += ' AND active=1';
   if (category) { sql += ' AND category=?'; args.push(category); }
   sql += ' ORDER BY created_at DESC';
-  return db.prepare(sql).all(...args).map(row => productRowToObject(row, includeInactive && admin, admin));
+  return db.prepare(sql).all(...args).map(row => productRowToObject(row, includeInactive && admin));
 }
 function inventoryCounts() {
   const p = db.prepare('SELECT COUNT(*) AS n FROM products WHERE active=1').get().n;
@@ -407,89 +317,6 @@ function getOrder(id) {
   const items = db.prepare('SELECT * FROM order_items WHERE order_id=?').all(order.id);
   return { ...order, subtotal:Number(order.subtotal), discount:Number(order.discount), deliveryFee:Number(order.delivery_fee), total:Number(order.total), items: items.map(i=>({...i,unitPrice:Number(i.unit_price),costPrice:Number(i.cost_price),quantity:Number(i.quantity),lineTotal:Number(i.line_total)})) };
 }
-function validatePromoCode(rawCode, subtotal, phone = '') {
-  const killSwitch = process.env.DISABLE_ALL_PROMOS === '1';
-  const settingRow = db.prepare("SELECT value FROM site_settings WHERE key='promos_disabled'").get();
-  if (killSwitch || (settingRow && settingRow.value === '1')) {
-    const err = new Error('Promotions are currently disabled.');
-    err.status = 400;
-    throw err;
-  }
-  const code = cleanText(rawCode, 30).toUpperCase();
-  if (!code) return null;
-
-  const promo = db.prepare("SELECT * FROM promo_codes WHERE code = ?").get(code);
-  if (!promo) {
-    const err = new Error('Invalid promo code.');
-    err.status = 400;
-    throw err;
-  }
-  if (promo.status !== 'active') {
-    const err = new Error(`Promo code is ${promo.status}.`);
-    err.status = 400;
-    throw err;
-  }
-  const now = new Date().toISOString();
-  if (promo.starts_at && now < promo.starts_at) {
-    const err = new Error('Promo code is not active yet.');
-    err.status = 400;
-    throw err;
-  }
-  if (promo.expires_at && now > promo.expires_at) {
-    db.prepare("UPDATE promo_codes SET status='expired' WHERE id=?").run(promo.id);
-    const err = new Error('Promo code has expired.');
-    err.status = 400;
-    throw err;
-  }
-  if (promo.min_subtotal > 0 && subtotal < promo.min_subtotal) {
-    const err = new Error(`Minimum order subtotal for this code is PKR ${Number(promo.min_subtotal).toLocaleString()}.`);
-    err.status = 400;
-    throw err;
-  }
-  if (promo.usage_limit > 0) {
-    const usageRow = db.prepare("SELECT COUNT(*) as count FROM promo_redemptions WHERE promo_id=?").get(promo.id);
-    const usageCount = usageRow ? usageRow.count : 0;
-    if (usageCount >= promo.usage_limit) {
-      db.prepare("UPDATE promo_codes SET status='exhausted' WHERE id=?").run(promo.id);
-      const err = new Error('Promo code redemption limit reached.');
-      err.status = 400;
-      throw err;
-    }
-  }
-  if (phone && promo.per_customer_limit > 0) {
-    const phoneHash = crypto.createHash('sha256').update(phone).digest('hex');
-    const custRow = db.prepare("SELECT COUNT(*) as count FROM promo_redemptions WHERE promo_id=? AND customer_phone_hash=?").get(promo.id, phoneHash);
-    const custUsage = custRow ? custRow.count : 0;
-    if (custUsage >= promo.per_customer_limit) {
-      const err = new Error('You have already used this promo code.');
-      err.status = 400;
-      throw err;
-    }
-  }
-
-  let discount = 0;
-  if (promo.type === 'percentage') {
-    discount = Math.round(subtotal * (Number(promo.value) / 100));
-  } else {
-    discount = Math.round(Number(promo.value));
-  }
-  if (promo.max_discount > 0 && discount > promo.max_discount) {
-    discount = Number(promo.max_discount);
-  }
-  if (discount > subtotal) {
-    discount = subtotal;
-  }
-  return {
-    id: promo.id,
-    code: promo.code,
-    type: promo.type,
-    value: Number(promo.value),
-    discount,
-    min_subtotal: Number(promo.min_subtotal),
-    max_discount: Number(promo.max_discount)
-  };
-}
-
 function createOrder(data, source = 'website') {
   const customerName = cleanText(data.customerName || data.name, 120);
   const phone = cleanText(data.phone, 30);
@@ -506,7 +333,9 @@ function createOrder(data, source = 'website') {
     if (combinedQuantity > 99) { const e=new Error('Maximum quantity for each variant is 99.');e.status=400;throw e; }
     aggregated.set(variantId, combinedQuantity);
   }
-  const rawPromo = cleanText(data.promoCode, 30);
+  const promoCode = cleanText(data.promoCode, 20).toUpperCase();
+  const promoRate = promoCode === 'HSS10' ? 0.10 : promoCode === 'HSS20' ? 0.20 : 0;
+  if (promoCode && !promoRate) { const e=new Error('Promo code is invalid.');e.status=400;throw e; }
   const idemKey = cleanText(data.idempotencyKey, 80);
   if (idemKey && !/^[A-Za-z0-9_-]{16,80}$/.test(idemKey)) { const e = new Error('Invalid request key.'); e.status=400; throw e; }
   if (idemKey) {
@@ -524,22 +353,16 @@ function createOrder(data, source = 'website') {
       const row = db.prepare(`SELECT v.id AS variant_id,v.sku,v.color,v.size,v.stock,v.active AS variant_active,p.id AS product_id,p.name,p.category,p.price,p.cost_price,p.active AS product_active
         FROM variants v JOIN products p ON p.id=v.product_id WHERE v.id=?`).get(variantId);
       if (!row || !row.variant_active || !row.product_active) { const e=new Error('One of the selected products is unavailable. Refresh the page and try again.');e.status=409;throw e; }
-      if (row.stock < quantity) { const e=new Error(`${row.name} (${row.color}, ${row.size}) is not available in that quantity.`);e.status=409;throw e; }
+      if (row.stock < quantity) { const e=new Error(`${row.name} (${row.color}, ${row.size}) has only ${row.stock} item(s) left in stock.`);e.status=409;throw e; }
       normalized.push({ ...row, quantity, lineTotal:Number(row.price)*quantity });
       subtotal += Number(row.price)*quantity;
       totalCost += Number(row.cost_price)*quantity;
     }
-    const validatedPromo = rawPromo ? validatePromoCode(rawPromo, subtotal, phone) : null;
-    const discount = validatedPromo ? validatedPromo.discount : 0;
+    const discount = Math.round(subtotal * promoRate);
     const deliveryFee = subtotal - discount >= 10000 ? 0 : 350;
     const total = subtotal - discount + deliveryFee;
     db.prepare(`INSERT INTO orders(id,order_number,customer_name,phone,address,subtotal,discount,delivery_fee,total,promo_code,status,source,notes,created_at,updated_at,idempotency_key)
-      VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?)`).run(orderId,orderNumber,customerName,phone,address,subtotal,discount,deliveryFee,total,validatedPromo?validatedPromo.code:'',source,cleanText(data.notes,1000),t,t,idemKey||null);
-    if (validatedPromo) {
-      const phoneHash = crypto.createHash('sha256').update(phone).digest('hex');
-      db.prepare(`INSERT INTO promo_redemptions(id,promo_id,order_id,customer_phone_hash,amount,created_at) VALUES(?,?,?,?,?,?)`)
-        .run(uid(), validatedPromo.id, orderId, phoneHash, discount, t);
-    }
+      VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?)`).run(orderId,orderNumber,customerName,phone,address,subtotal,discount,deliveryFee,total,promoRate?promoCode:'',source,cleanText(data.notes,1000),t,t,idemKey||null);
     for (const item of normalized) {
       db.prepare(`INSERT INTO order_items(id,order_id,product_id,variant_id,product_name,sku,category,color,size,unit_price,cost_price,quantity,line_total)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid(),orderId,item.product_id,item.variant_id,item.name,item.sku,item.category,item.color,item.size,item.price,item.cost_price,item.quantity,item.lineTotal);
@@ -700,11 +523,11 @@ function saveProduct(data, productId = null) {
       for (const v of oldVariants) if (!keep.has(v.id)) db.prepare('UPDATE variants SET active=0,updated_at=? WHERE id=?').run(t,v.id);
     }
     db.exec('COMMIT');
-    return productRowToObject(db.prepare('SELECT * FROM products WHERE id=?').get(id),true,true);
+    return productRowToObject(db.prepare('SELECT * FROM products WHERE id=?').get(id),true);
   } catch(e) { db.exec('ROLLBACK'); throw e; }
 }
 function staticMime(ext) {
-  return ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.mp4':'video/mp4','.mov':'video/quicktime','.webm':'video/webm','.svg':'image/svg+xml','.ico':'image/x-icon','.txt':'text/plain; charset=utf-8','.woff':'font/woff','.woff2':'font/woff2','.ttf':'font/ttf','.otf':'font/otf'})[ext.toLowerCase()] || 'application/octet-stream';
+  return ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.mp4':'video/mp4','.mov':'video/quicktime','.webm':'video/webm','.svg':'image/svg+xml','.ico':'image/x-icon','.txt':'text/plain; charset=utf-8'})[ext.toLowerCase()] || 'application/octet-stream';
 }
 function serveFile(req,res,relative) {
   const file = String(relative).startsWith('uploads'+path.sep) ? path.resolve(UPLOAD_DIR, String(relative).slice(('uploads'+path.sep).length)) : path.resolve(ROOT,relative);
@@ -725,15 +548,6 @@ function serveFile(req,res,relative) {
       end=Math.min(end,stat.size-1);
       res.writeHead(206,{...headers,'Content-Range':`bytes ${start}-${end}/${stat.size}`,'Content-Length':end-start+1});
       fs.createReadStream(file,{start,end}).pipe(res);return;
-    }
-    const compressible = ['.html','.css','.js','.json','.svg','.txt'].includes(ext);
-    const acceptEncoding = (req.headers && req.headers['accept-encoding']) || '';
-    if (compressible && acceptEncoding.includes('gzip')) {
-      headers['Content-Encoding'] = 'gzip';
-      headers['Vary'] = 'Accept-Encoding';
-      res.writeHead(200, headers);
-      fs.createReadStream(file).pipe(zlib.createGzip()).pipe(res);
-      return;
     }
     res.writeHead(200,{...headers,'Content-Length':stat.size});
     fs.createReadStream(file).pipe(res);
@@ -777,16 +591,13 @@ const server = http.createServer(async (req,res) => {
       let bannerUrl=old.bannerUrl;
       if(b.removeBanner)bannerUrl='';
       if(b.bannerFile)bannerUrl=saveHomepageMedia(b.bannerFile,'banner');
-      let bannerMobileUrl=old.bannerMobileUrl||'';
-      if(b.removeBannerMobile)bannerMobileUrl='';
-      if(b.bannerMobileFile)bannerMobileUrl=saveHomepageMedia(b.bannerMobileFile,'banner');
       let reels=Array.isArray(b.reels)?b.reels:old.reels;
       if(reels.length>6)return bad(res,400,'Maximum six reels.');
       reels=reels.map(r=>({url:String(r.url||''),caption:cleanText(r.caption,100),deal:cleanText(r.deal,140)}));
       if(reels.some(r=>r.url&&!/^\/uploads\/[a-f0-9-]+\.(mp4|webm)$/i.test(r.url)))return bad(res,400,'Invalid reel path.');
       if(b.reelFile){const file=saveHomepageMedia(b.reelFile,'reel');reels.push({url:file,caption:cleanText(b.reelCaption,100),deal:cleanText(b.reelDeal,140)});}
       if(reels.length>6)return bad(res,400,'Maximum six reels.');
-      const next={tagline,bannerHeading,bannerUrl,bannerMobileUrl,reels};
+      const next={tagline,bannerHeading,bannerUrl,reels};
       db.prepare('INSERT INTO site_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('homepage',JSON.stringify(next));
       return json(res,200,{ok:true,homepage:next});
     }
@@ -907,80 +718,6 @@ const server = http.createServer(async (req,res) => {
     if(waMatch&&req.method==='GET'){if(!requireAdmin(req,res))return;const details=wa.detail(waMatch[1]);if(!details)return bad(res,404,'Order not found');return json(res,200,details);}
     waMatch=route.match(/^\/api\/orders\/([^/]+)\/dispatch$/);
     if(waMatch&&req.method==='POST'){if(!requireAdmin(req,res))return;const body=await readJson(req,20*1024);return json(res,200,{dispatch:wa.courierDispatch(waMatch[1],body)});}
-    // --- Category 3 Promo API Endpoints ---
-    if (route === '/api/promos/validate' && req.method === 'POST') {
-      const body = await readJson(req, 16 * 1024);
-      const subtotal = Number(body.subtotal || 0);
-      const phone = cleanText(body.phone, 30);
-      const code = cleanText(body.code || body.promoCode, 30);
-      if (!code) return bad(res, 400, 'Please enter a promo code.');
-      try {
-        const validated = validatePromoCode(code, subtotal, phone);
-        return json(res, 200, { ok: true, promo: validated });
-      } catch (err) {
-        return bad(res, err.status || 400, err.message);
-      }
-    }
-    if (route === '/api/admin/promos' && req.method === 'GET') {
-      if (!requireAdmin(req, res)) return;
-      const promos = db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM promo_redemptions r WHERE r.promo_id = p.id) as redemption_count FROM promo_codes p ORDER BY p.created_at DESC`).all();
-      const killSwitchRow = db.prepare("SELECT value FROM site_settings WHERE key='promos_disabled'").get();
-      const promosDisabled = process.env.DISABLE_ALL_PROMOS === '1' || (killSwitchRow && killSwitchRow.value === '1');
-      return json(res, 200, { promos, promosDisabled: !!promosDisabled });
-    }
-    if (route === '/api/admin/promos' && req.method === 'POST') {
-      const session = requireAdmin(req, res);
-      if (!session) return;
-      const b = await readJson(req, 32 * 1024);
-      const code = cleanText(b.code, 30).toUpperCase();
-      if (!code || !/^[A-Z0-9_-]{3,30}$/.test(code)) return bad(res, 400, 'Promo code must be 3-30 alphanumeric characters.');
-      const type = b.type === 'fixed' ? 'fixed' : 'percentage';
-      const value = Number(b.value);
-      if (type === 'percentage' && (value <= 0 || value > 100)) return bad(res, 400, 'Percentage discount must be between 1 and 100.');
-      if (type === 'fixed' && value <= 0) return bad(res, 400, 'Fixed PKR discount must be greater than 0.');
-      const durationDays = Number(b.duration_days ?? b.durationDays ?? 30);
-      if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 365) return bad(res, 400, 'Validity duration must be an integer between 1 and 365 days.');
-      const startsAt = b.starts_at ? new Date(b.starts_at).toISOString() : new Date().toISOString();
-      const expiresAt = new Date(new Date(startsAt).getTime() + durationDays * 86400000).toISOString();
-      const minSubtotal = Math.max(0, Number(b.min_subtotal || 0));
-      const maxDiscount = Math.max(0, Number(b.max_discount || 0));
-      const usageLimit = Math.max(0, Number(b.usage_limit || 0));
-      const perCustomerLimit = Math.max(1, Number(b.per_customer_limit || 1));
-      const existing = db.prepare('SELECT id FROM promo_codes WHERE code=?').get(code);
-      if (existing) return bad(res, 409, `Promo code ${code} already exists.`);
-      const id = uid();
-      const t = nowIso();
-      db.prepare(`INSERT INTO promo_codes(id,code,type,value,starts_at,expires_at,status,min_subtotal,max_discount,usage_limit,per_customer_limit,created_by,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,code,type,value,startsAt,expiresAt,'active',minSubtotal,maxDiscount,usageLimit,perCustomerLimit,session.username,t);
-      db.prepare(`INSERT INTO promo_audit(id,promo_id,admin_user,action,old_value,new_value,created_at) VALUES(?,?,?,?,?,?,?)`)
-        .run(uid(), id, session.username, 'create', null, JSON.stringify({ code, type, value, durationDays, startsAt, expiresAt }), t);
-      return json(res, 201, { ok: true, id, code });
-    }
-    let promoMatch = route.match(/^\/api\/admin\/promos\/([a-f0-9-]+)$/i);
-    if (promoMatch && req.method === 'PATCH') {
-      const session = requireAdmin(req, res);
-      if (!session) return;
-      const id = promoMatch[1];
-      const promo = db.prepare('SELECT * FROM promo_codes WHERE id=?').get(id);
-      if (!promo) return bad(res, 404, 'Promo code not found.');
-      const b = await readJson(req, 16 * 1024);
-      const action = cleanText(b.action || b.status, 30);
-      if (!['paused', 'active', 'revoked'].includes(action)) return bad(res, 400, 'Action must be active, paused, or revoked.');
-      const t = nowIso();
-      db.prepare('UPDATE promo_codes SET status=? WHERE id=?').run(action, id);
-      db.prepare(`INSERT INTO promo_audit(id,promo_id,admin_user,action,old_value,new_value,created_at) VALUES(?,?,?,?,?,?,?)`)
-        .run(uid(), id, session.username, action, promo.status, action, t);
-      return json(res, 200, { ok: true, id, status: action });
-    }
-    if (route === '/api/admin/promos/toggle-all' && req.method === 'POST') {
-      const session = requireAdmin(req, res);
-      if (!session) return;
-      const b = await readJson(req, 8 * 1024);
-      const disable = b.disable ? '1' : '0';
-      db.prepare("INSERT INTO site_settings(key,value) VALUES('promos_disabled',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(disable);
-      return json(res, 200, { ok: true, promosDisabled: disable === '1' });
-    }
-
     if(route==='/api/orders'&&req.method==='POST'){
       // Customer checkout never needs multi-megabyte request bodies.
       const body=await readJson(req,64*1024);const order=createOrder(body,'website');if(!order.duplicate){try{wa.scheduleInitial(order);setImmediate(()=>wa.pump().catch(console.error));}catch(e){console.error('[WhatsApp setup]',e.message)}}return json(res,order.duplicate?200:201,{order,duplicate:!!order.duplicate});
@@ -1019,56 +756,22 @@ const server = http.createServer(async (req,res) => {
       if(delta)db.prepare(`INSERT INTO stock_movements(id,variant_id,product_id,order_id,change_qty,reason,note,created_at) VALUES(?,?,?,\'\',?,?,?,?)`).run(uid(),variant.id,variant.pid,delta,'manual_adjustment',cleanText(body.note||'Manual stock adjustment',300),t);
       return json(res,200,{ok:true,stock:target,delta});
     }
-    // Clean Page Routing (handles clean URLs and direct .html routes)
-    const PAGE_ROUTES = {
-      '/': 'index.html',
-      '/index': 'index.html',
-      '/index.html': 'index.html',
-      '/admin': 'admin.html',
-      '/admin.html': 'admin.html',
-      '/product': 'product.html',
-      '/products': 'product.html',
-      '/product.html': 'product.html',
-      '/bras': 'bras.html',
-      '/bras.html': 'bras.html',
-      '/panties': 'panties.html',
-      '/panties.html': 'panties.html',
-      '/sets': 'sets.html',
-      '/sets.html': 'sets.html',
-      '/accessories': 'accessories.html',
-      '/accessories.html': 'accessories.html',
-      '/body-shaper': 'body-shaper.html',
-      '/body-shaper.html': 'body-shaper.html',
-      '/camisole': 'camisole.html',
-      '/camisole.html': 'camisole.html',
-      '/exchange': 'exchange.html',
-      '/exchange.html': 'exchange.html',
-      '/reel': 'reel.html',
-      '/reels': 'reel.html',
-      '/reel.html': 'reel.html'
-    };
-    const cleanPath = (route.length > 1 && route.endsWith('/')) ? route.slice(0, -1) : route;
-    if (PAGE_ROUTES[cleanPath]) {
-      return serveFile(req, res, PAGE_ROUTES[cleanPath]);
-    }
-
+    if(route==='/admin' || route==='/admin/') return serveFile(req,res,'admin.html');
     if(route.startsWith('/uploads/')) {
       const name=route.slice('/uploads/'.length);if(!/^[a-f0-9-]+\.(?:jpg|png|webp|mp4|mov|webm)$/i.test(name))return bad(res,404,'Not found.');return serveFile(req,res,path.join('uploads',name));
     }
     if(route.startsWith('/videos/')) {
       const name=route.slice('/videos/'.length);if(!/^reel-[1-3]\.mp4$/i.test(name))return bad(res,404,'Not found.');return serveFile(req,res,path.join('videos',name));
     }
-    if(route.startsWith('/fonts/')) {
-      const name=route.slice('/fonts/'.length);if(!/^[a-zA-Z0-9_.-]+\.(?:woff|woff2|ttf|otf)$/i.test(name))return bad(res,404,'Not found.');return serveFile(req,res,path.join('fonts',name));
-    }
-    if(route.startsWith('/css/')) {
-      const name=route.slice('/css/'.length);if(!/^[a-zA-Z0-9_.-]+\.css$/i.test(name))return bad(res,404,'Not found.');return serveFile(req,res,path.join('css',name));
-    }
-    if(route.startsWith('/js/')) {
-      const name=route.slice('/js/'.length);if(!/^[a-zA-Z0-9_.-]+\.js$/i.test(name))return bad(res,404,'Not found.');return serveFile(req,res,path.join('js',name));
-    }
+    if(route==='/') return serveFile(req,res,'index.html');
     // Only expose intentional website assets. Never serve server.js, data/, backups, or other files.
-    const publicFiles = new Set(['index.html','reel.html','product.html','bras.html','panties.html','sets.html','accessories.html','body-shaper.html','camisole.html','admin.html','inventory-store.js','exchange.html','hss-drawer-redesign.css','hss-fonts.css','fit-assistant-icon.png','brand-logo.jpg','logo.jpg','logo.png','logo.webp','favicon.ico']);
+    if (route.startsWith('/css/') || route.startsWith('/js/') || route.startsWith('/fonts/')) {
+      const safeRel = path.normalize(route.slice(1));
+      if (!safeRel.startsWith('..')) {
+        return serveFile(req, res, safeRel);
+      }
+    }
+    const publicFiles = new Set(['index.html','reel.html','product.html','bras.html','panties.html','sets.html','accessories.html','body-shaper.html','camisole.html','admin.html','inventory-store.js','exchange.html','hss-fonts.css','hss-drawer-redesign.css','fit-assistant-icon.png','brand-logo.jpg','logo.jpg','logo.png','logo.webp','current_banner.png']);
     const requestedFile=route.startsWith('/')?route.slice(1):route;
     if(publicFiles.has(requestedFile)) return serveFile(req,res,requestedFile);
     return bad(res,404,'Not found.');

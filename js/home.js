@@ -1,359 +1,433 @@
-/**
- * Her Second Skin PK — Homepage Controller (js/home.js)
- * Manages banner, reels, best sellers, category filtering, modals & cart rendering
- */
-(() => {
-  'use strict';
 
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const money = n => 'PKR ' + Number(n || 0).toLocaleString('en-PK');
+  (async()=>{try{const response=await fetch('/api/category-images',{cache:'no-store'});if(!response.ok)return;const data=await response.json();for(const img of document.querySelectorAll('[data-category-photo]')){const photo=data.images?.[img.dataset.categoryPhoto];if(typeof photo==='string'&&/^\/uploads\/[a-f0-9-]+\.(jpg|png|webp)$/i.test(photo))img.src=photo;}}catch(e){console.warn('Category photos unavailable',e)}})();
+  
 
-  let activeReels = [];
-  let currentReelIndex = 0;
 
-  // ----------------------------------------------------
-  // 1. INITIALIZATION & DATA LOADING
-  // ----------------------------------------------------
-  document.addEventListener('DOMContentLoaded', () => {
-    initBanner();
-    initCategoryImages();
-    initReels();
-    initCartListener();
-    initRecentlyViewed();
-    checkCartUrlParam();
-  });
+    const ADMIN_WHATSAPP_NUMBER = "923397055500";
 
-  // Check if URL has ?cart=1 to open cart drawer immediately
-  function checkCartUrlParam() {
-    if (HSSRouter.getParam('cart') === '1') {
-      setTimeout(() => HSSState.ui.toggleDrawer('cart-drawer', true), 300);
+    let cart = [];
+    let wishlist = [];
+    let currentCategory = 'all';
+    let activePromo = null;
+    const DELIVERY_FEE = 350;
+    const FREE_DELIVERY_THRESHOLD = 10000;
+    let recentlyViewed = JSON.parse(localStorage.getItem('hssp_recent') || '[]');
+
+    function handleDrawerSearch(event) {
+      event.preventDefault();
+      const query = document.getElementById('drawer-search-input').value.trim();
+      document.getElementById('search-input').value = query;
+      if (typeof filterProducts === 'function') filterProducts();
+      toggleMenu();
+      document.getElementById('collection').scrollIntoView({behavior:'smooth',block:'start'});
     }
-  }
+    function toggleMenu() {
+      document.getElementById('side-menu').classList.toggle('active');
+      updateOverlay();
+    }
 
-  // ----------------------------------------------------
-  // 2. HOMEPAGE BANNER & TAGLINE
-  // ----------------------------------------------------
-  async function initBanner() {
-    try {
-      const res = await fetch('/api/homepage', { cache: 'no-store' });
-      if (!res.ok) return;
-      const { homepage } = await res.json();
-      if (!homepage) return;
+    function toggleCart() {
+      document.getElementById('cart-drawer').classList.toggle('active');
+      updateOverlay();
+    }
+    function openCartDrawer() {
+      document.getElementById('cart-drawer').classList.add('active');
+      updateOverlay();
+    }
 
-      const bannerImg = $('hero-banner-img');
-      const bannerMobile = $('hero-banner-mobile');
-      const bannerLink = $('hero-banner-link');
-      const taglineEl = $('brand-tagline-text');
+    function toggleWishlist() {
+      document.getElementById('wishlist-drawer').classList.toggle('active');
+      updateOverlay();
+    }
 
-      if (homepage.tagline && taglineEl) {
-        taglineEl.textContent = homepage.tagline;
+    function closeAllDrawers() {
+      document.getElementById('side-menu').classList.remove('active');
+      document.getElementById('cart-drawer').classList.remove('active');
+      document.getElementById('wishlist-drawer').classList.remove('active');
+      updateOverlay();
+    }
+
+    function updateOverlay() {
+      const m = document.getElementById('side-menu').classList.contains('active');
+      const c = document.getElementById('cart-drawer').classList.contains('active');
+      const w = document.getElementById('wishlist-drawer').classList.contains('active');
+      document.getElementById('overlay').classList.toggle('active', m || c || w);
+    }
+
+    // Category Filter Function
+    function filterCategory(category, btn) {
+      currentCategory = category;
+      const buttons = document.querySelectorAll('.header-cat-nav button');
+      if(btn) {
+        buttons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
       }
-
-      const desktopUrl = homepage.bannerUrl || 'current_banner.png';
-      const mobileUrl = homepage.bannerMobileUrl || desktopUrl;
-
-      if (bannerImg) bannerImg.src = desktopUrl;
-      if (bannerMobile) bannerMobile.srcset = mobileUrl;
-      if (bannerLink && homepage.bannerLink) bannerLink.href = homepage.bannerLink;
-    } catch (e) {
-      console.warn('Banner load failed', e);
-    }
-  }
-
-  // ----------------------------------------------------
-  // 3. CATEGORY IMAGES (Admin configurable)
-  // ----------------------------------------------------
-  async function initCategoryImages() {
-    try {
-      const res = await fetch('/api/category-images', { cache: 'no-store' });
-      if (!res.ok) return;
-      const data = await res.json();
-      const images = data.images || {};
-
-      document.querySelectorAll('[data-category-photo]').forEach(img => {
-        const cat = img.dataset.categoryPhoto;
-        if (images[cat] && typeof images[cat] === 'string') {
-          img.src = images[cat];
-        }
-      });
-    } catch (e) {
-      console.warn('Category images load failed', e);
-    }
-  }
-
-  // ----------------------------------------------------
-  // 4. BOUTIQUE VIDEO REELS
-  // ----------------------------------------------------
-  async function initReels() {
-    const section = $('video-reels');
-    const container = $('managed-reels');
-    if (!section || !container) return;
-
-    try {
-      const res = await fetch('/api/homepage', { cache: 'no-store' });
-      if (!res.ok) return;
-      const { homepage } = await res.json();
-      activeReels = (homepage?.reels || []).filter(r => r && r.url);
-
-      if (!activeReels.length) {
-        section.hidden = true;
-        return;
-      }
-
-      section.hidden = false;
-      container.innerHTML = activeReels.map((r, i) => `
-        <div class="reel-card" onclick="HSSHome.openReel(${i})" role="button" tabindex="0" aria-label="${esc(r.caption || 'Reel')}">
-          <video src="${esc(r.url)}#t=0.5" muted playsinline preload="none" loop></video>
-          <div class="reel-caption">${esc(r.caption || 'Watch Reel')}</div>
-        </div>
-      `).join('');
-    } catch (e) {
-      console.warn('Reels load failed', e);
-      section.hidden = true;
-    }
-  }
-
-  // ----------------------------------------------------
-  // 5. CART DRAWER RENDERING (Reactive State)
-  // ----------------------------------------------------
-  function initCartListener() {
-    window.addEventListener('hss:cart-updated', e => {
-      renderCartDrawer(e.detail);
-    });
-    // Initial render
-    renderCartDrawer({
-      items: HSSState.cart.get(),
-      count: HSSState.cart.count(),
-      total: HSSState.cart.total()
-    });
-  }
-
-  function renderCartDrawer({ items, count, total }) {
-    const listEl = $('cart-product-list');
-    const subtotalEl = $('cart-subtotal-val');
-    const totalEl = $('cart-total-val');
-    const emptyNotice = $('cart-empty-notice');
-    const checkoutBtn = $('cart-checkout-btn');
-
-    if (subtotalEl) subtotalEl.textContent = money(total);
-    if (totalEl) {
-      const delivery = count > 0 ? 250 : 0;
-      totalEl.textContent = money(total + delivery);
+      filterProducts();
     }
 
-    if (!listEl) return;
-
-    if (!items.length) {
-      listEl.innerHTML = '<div style="text-align:center;padding:36px 14px;color:#888;">Aapka cart khali hai. 🛍️</div>';
-      if (emptyNotice) emptyNotice.style.display = 'block';
-      if (checkoutBtn) checkoutBtn.disabled = true;
-      return;
-    }
-
-    if (emptyNotice) emptyNotice.style.display = 'none';
-    if (checkoutBtn) checkoutBtn.disabled = false;
-
-    listEl.innerHTML = items.map((item, idx) => `
-      <div class="item-row">
-        <div class="item-row-top">
-          <label class="cart-select-line">
-            <input type="checkbox" ${item.selected !== false ? 'checked' : ''} onchange="HSSState.cart.setSelected(${idx}, this.checked)">
-            <span>Order item</span>
-          </label>
-          <button type="button" class="cart-item-remove-btn" onclick="HSSState.cart.remove(${idx})">Remove</button>
-        </div>
-        <div class="item-row-content">
-          <div class="item-thumb-col">
-            <img class="item-thumb-img" src="${esc(item.image)}" alt="${esc(item.name)}" onerror="this.src='/brand-logo.jpg'">
-          </div>
-          <div class="item-info-col">
-            <div class="item-title-price">
-              <h4 class="item-title">${esc(item.name)}</h4>
-              <span class="item-price">${money(item.price)}</span>
-            </div>
-            ${(item.color || item.size || item.cupSize) ? `
-              <div class="item-variant-line">
-                ${item.color ? `<span class="item-variant-tag">${esc(item.color)}</span>` : ''}
-                ${item.size ? `<span class="item-variant-tag">${esc(item.size)}</span>` : ''}
-                ${item.cupSize ? `<span class="item-variant-tag">Cup ${esc(item.cupSize)}</span>` : ''}
-              </div>
-            ` : ''}
-            <div class="item-bottom-controls">
-              <div class="qty-controls">
-                <button type="button" onclick="HSSState.cart.updateQty(${idx}, -1)" aria-label="Decrease quantity">−</button>
-                <span class="qty-display">${item.qty || item.quantity || 1}</span>
-                <button type="button" onclick="HSSState.cart.updateQty(${idx}, 1)" aria-label="Increase quantity">+</button>
-              </div>
-              <span class="item-unit-price">${money((item.qty || 1) * item.price)}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    `).join('');
-  }
-
-  // ----------------------------------------------------
-  // 6. WHATSAPP CHECKOUT FROM HOMEPAGE CART
-  // ----------------------------------------------------
-  function handleCheckout() {
-    const name = ($('cust-name')?.value || '').trim();
-    const phone = ($('cust-phone')?.value || '').trim();
-    const address = ($('cust-address')?.value || '').trim();
-
-    if (!name || !phone || !address) {
-      alert('Meharbani farma kar apna Naam, Phone number aur Delivery Address darj karein.');
-      return;
-    }
-
-    const items = HSSState.cart.get().filter(i => i.selected !== false);
-    if (!items.length) {
-      alert('Order karne ke liye cart mein kam az kam ek item select karein.');
-      return;
-    }
-
-    const subtotal = HSSState.cart.total(true);
-    HSSState.whatsapp.openCheckout({
-      customerName: name,
-      phone,
-      address,
-      items,
-      subtotal,
-      deliveryFee: 250
-    });
-  }
-
-  // ----------------------------------------------------
-  // 7. RECENTLY VIEWED PRODUCTS
-  // ----------------------------------------------------
-  function initRecentlyViewed() {
-    const list = HSSState.recent.get();
-    const sec = $('recently-viewed-section');
-    const target = $('recently-viewed-list');
-    if (!sec || !target || !list.length) return;
-
-    sec.style.display = 'block';
-    target.innerHTML = list.map(p => `
-      <div class="card" onclick="location.href='/product?id=${encodeURIComponent(p.id)}'">
-        <img src="${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">
-        <h3>${esc(p.name)}</h3>
-        <div class="price">${money(p.price)}</div>
-      </div>
-    `).join('');
-  }
-
-  // Expose global controller for inline listeners
-  window.HSSHome = {
-    toggleMenu(force) {
-      HSSState.ui.toggleDrawer('site-side-menu', force);
-    },
-    toggleCart(force) {
-      HSSState.ui.toggleDrawer('cart-drawer', force);
-    },
-    toggleWishlist(force) {
-      HSSState.ui.toggleDrawer('wishlist-drawer', force);
-    },
-    closeAll() {
-      HSSState.ui.closeAll();
-    },
-    filterCategory(category, btn) {
-      document.querySelectorAll('.header-cat-nav button').forEach(b => b.classList.remove('active'));
-      if (btn) btn.classList.add('active');
-
+    // Combined Search and Category Filter
+    function filterProducts() {
+      const query = document.getElementById('search-input').value.toLowerCase();
       const cards = document.querySelectorAll('#product-grid .card');
+
       cards.forEach(card => {
-        if (category === 'all' || card.dataset.category === category) {
-          card.style.display = '';
+        const name = card.getAttribute('data-name').toLowerCase();
+        const cat = card.getAttribute('data-category');
+        const matchesCategory = (currentCategory === 'all' || cat === currentCategory);
+        const searchable = [name, cat, card.textContent || ''].join(' ').toLowerCase();
+        const matchesSearch = searchable.includes(query);
+
+        if (matchesCategory && matchesSearch) {
+          card.style.display = 'block';
         } else {
           card.style.display = 'none';
         }
       });
-    },
-    openProductModal(name, price, mainImg, images, desc, videos) {
-      const modal = $('product-modal');
-      if (!modal) return;
-      $('modal-title').textContent = name;
-      $('modal-price').textContent = money(price);
-      $('modal-desc').textContent = desc || '';
-      $('modal-main-img').src = mainImg;
+    }
 
-      const thumbs = $('modal-thumbs');
-      if (thumbs) {
-        thumbs.innerHTML = (images || []).map(img => `
-          <img src="${esc(img)}" onclick="$('modal-main-img').src='${esc(img)}'" alt="">
-        `).join('');
-      }
+    // Keep the original product order so Featured First can reliably restore it.
+    const productGrid = document.getElementById('product-grid');
+    if (productGrid) {
+      Array.from(productGrid.querySelectorAll('.card')).forEach((card, index) => {
+        card.dataset.featuredOrder = String(index);
+      });
+    }
 
-      $('modal-add-cart').onclick = () => {
-        HSSState.cart.add({ name, price, image: mainImg, qty: 1 });
-        HSSHome.closeProductModal();
+    // Sorting: Best Selling uses data-sold when real sales counts are added.
+    // Until sales data exists, it safely keeps Featured order rather than inventing rankings.
+    function sortProducts() {
+      const sortBy = document.getElementById('sort-select').value;
+      const grid = document.getElementById('product-grid');
+      const cardsArray = Array.from(grid.querySelectorAll('.card'));
+
+      cardsArray.sort((a, b) => {
+        const priceA = Number(a.dataset.price) || 0;
+        const priceB = Number(b.dataset.price) || 0;
+        const nameA = a.dataset.name || '';
+        const nameB = b.dataset.name || '';
+        const featuredA = Number(a.dataset.featuredOrder) || 0;
+        const featuredB = Number(b.dataset.featuredOrder) || 0;
+        const soldA = Number(a.dataset.sold) || 0;
+        const soldB = Number(b.dataset.sold) || 0;
+
+        if (sortBy === 'price-low') return priceA - priceB || featuredA - featuredB;
+        if (sortBy === 'price-high') return priceB - priceA || featuredA - featuredB;
+        if (sortBy === 'az') return nameA.localeCompare(nameB) || featuredA - featuredB;
+        if (sortBy === 'best-selling') return soldB - soldA || featuredA - featuredB;
+        return featuredA - featuredB; // Featured First
+      });
+
+      cardsArray.forEach(card => grid.appendChild(card));
+      filterProducts(); // Keep the current search/category filters applied after sorting.
+    }
+
+    // Product Modal & Lightbox Functions
+    function hssShowPhoto(src) {
+      const v = document.getElementById('modal-main-video'), im = document.getElementById('modal-main-img');
+      if (v) { v.pause(); v.style.display = 'none'; }
+      if (im) { im.style.display = ''; if (src) im.src = src; }
+    }
+    function hssShowVideo(src) {
+      const v = document.getElementById('modal-main-video'), im = document.getElementById('modal-main-img');
+      if (!v) return;
+      if (im) im.style.display = 'none';
+      v.src = src; v.style.display = 'block'; v.play().catch(() => {});
+    }
+    function openProductModal(name, price, mainImg, images, desc, videos) {
+      rememberRecentlyViewed(name, price, mainImg);
+      document.getElementById('modal-prod-name').textContent = name;
+      document.getElementById('modal-prod-price').textContent = 'PKR ' + price.toLocaleString();
+      document.getElementById('modal-prod-desc').textContent = desc;
+      document.getElementById('modal-main-img').src = mainImg;
+      
+      const thumbsContainer = document.getElementById('modal-thumbs');
+      const vids = Array.isArray(videos) ? videos.filter(Boolean) : [];
+      hssShowPhoto(mainImg);
+      thumbsContainer.innerHTML = images.map(img => `<img src="${img}" onclick="hssShowPhoto('${img}')">`).join('') + vids.map(v => `<div class="vthumb" onclick="hssShowVideo('${v}')" title="Video dekhein"><video src="${v}#t=0.5" preload="metadata" muted playsinline></video></div>`).join('');
+      
+      document.getElementById('modal-add-cart').onclick = function() {
+        addToCartCustom(name, price);
+        closeProductModal();
+      };
+      document.getElementById('modal-add-wish').onclick = function() {
+        addToWishlistCustom(name, price);
+        closeProductModal();
       };
 
-      modal.classList.add('is-open');
-    },
-    closeProductModal() {
-      const modal = $('product-modal');
-      if (modal) modal.classList.remove('is-open');
-    },
-    openReel(index) {
-      const reel = activeReels[index];
-      if (!reel) return;
-      currentReelIndex = index;
-      const viewer = $('boutique-reel-viewer');
-      const player = $('boutique-reel-player');
-      const title = $('boutique-reel-title');
-      const deal = $('boutique-reel-deal');
+      document.getElementById('product-modal').classList.add('active');
+    }
 
-      if (title) title.textContent = reel.caption || 'Watch Reel';
-      if (deal) deal.textContent = reel.deal || '';
-      if (player) {
-        player.src = reel.url;
-        player.play().catch(() => {});
-      }
-      if (viewer) viewer.classList.add('is-open');
-    },
-    closeReel() {
-      const viewer = $('boutique-reel-viewer');
-      const player = $('boutique-reel-player');
-      if (player) {
-        player.pause();
-        player.src = '';
-      }
-      if (viewer) viewer.classList.remove('is-open');
-    },
-    openSizeAssistant() {
-      const modal = $('size-assistant-modal');
-      if (modal) modal.classList.add('is-open');
-    },
-    closeSizeAssistant() {
-      const modal = $('size-assistant-modal');
-      if (modal) modal.classList.remove('is-open');
-    },
-    showSizeTab(tabName, btn) {
-      document.querySelectorAll('.size-tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.size-tab-content').forEach(c => c.style.display = 'none');
-      if (btn) btn.classList.add('active');
-      const target = $('size-tab-' + tabName);
-      if (target) target.style.display = 'block';
-    },
-    handleCheckout
-  };
+    function closeProductModal() {
+      document.getElementById('product-modal').classList.remove('active');
+      const mv = document.getElementById('modal-main-video'); if (mv) { mv.pause(); }
+    }
 
-  // Backwards compatibility for existing inline HTML onclicks and inventory-store.js
-  window.cart = HSSState.cart.get();
-  window.renderCart = () => renderCartDrawer({ items: HSSState.cart.get(), count: HSSState.cart.count(), total: HSSState.cart.total() });
-  window.toggleMenu = window.HSSHome.toggleMenu;
-  window.toggleCart = window.HSSHome.toggleCart;
-  window.openCartDrawer = () => window.HSSHome.toggleCart(true);
-  window.openProductModal = window.HSSHome.openProductModal;
-  window.closeProductModal = window.HSSHome.closeProductModal;
-  window.closeBoutiqueReel = window.HSSHome.closeReel;
-  window.openSizeAssistant = window.HSSHome.openSizeAssistant;
-  window.closeSizeAssistant = window.HSSHome.closeSizeAssistant;
-  window.showSizeTab = window.HSSHome.showSizeTab;
-  window.addToCart = (name, price, img) => HSSState.cart.add({ name, price, image: img, qty: 1 });
-  window.addToCartCustom = (name, price) => HSSState.cart.add({ name, price, qty: 1 });
-  window.checkoutWhatsApp = window.HSSHome.handleCheckout;
-  window.checkoutCart = window.HSSHome.handleCheckout;
-  window.filterProducts = () => {};
-})();
+    function openLightbox(imgSrc) {
+      document.getElementById('lightbox-img').src = imgSrc;
+      document.getElementById('lightbox').classList.add('active');
+    }
+
+    function closeLightbox() {
+      document.getElementById('lightbox').classList.remove('active');
+    }
+
+    function addToCart(name, price) {
+      const existing = cart.find(item => item.name === name);
+      if (existing) { existing.qty += 1; } else { cart.push({ name, price, size: '34B', color: 'Skin/Nude', qty: 1, selected: false }); }
+      renderCart();
+      openCartDrawer();
+    }
+
+    function addToCartCustom(name, price) {
+      const size = document.getElementById('modal-size').value;
+      const color = document.getElementById('modal-color').value;
+      const existing = cart.find(item => item.name === name && item.size === size && item.color === color);
+      if (existing) { existing.qty += 1; } else { cart.push({ name, price, size, color, qty: 1, selected: false }); }
+      renderCart();
+      openCartDrawer();
+    }
+
+    function addToWishlistCustom(name, price) {
+      const size = document.getElementById('modal-size').value;
+      const color = document.getElementById('modal-color').value;
+      if (!wishlist.some(item => item.name === name && item.size === size && item.color === color)) {
+        wishlist.push({ name, price, size, color });
+        renderWishlist();
+        toggleWishlist();
+      } else {
+        alert("This item is already in your wishlist!");
+      }
+    }
+
+    function removeFromCart(index) { cart.splice(index, 1); renderCart(); }
+    function removeFromWishlist(index) { wishlist.splice(index, 1); renderWishlist(); }
+
+    function setCartItemSelected(index, checked) {
+      if (!cart[index]) return;
+      cart[index].selected = Boolean(checked);
+      renderCart();
+    }
+
+    function selectAllCartItems(checked) {
+      cart.forEach(item => item.selected = Boolean(checked));
+      renderCart();
+    }
+
+    function getSelectedCartItems() { return cart.filter(item => item.selected); }
+
+    function changeCartQty(index, delta) {
+      if (!cart[index]) return;
+      cart[index].qty = Math.max(1, cart[index].qty + delta);
+      renderCart();
+    }
+    function applyPromoCode() {
+      const code = (document.getElementById('promo-code').value || '').trim().toUpperCase();
+      const status = document.getElementById('promo-status');
+      const codes = { HSS10: 0.10, HSS20: 0.20 };
+      if (!codes[code]) { activePromo = null; status.textContent = 'Invalid demo code. Try HSS10 or HSS20.'; status.style.color = '#b42318'; }
+      else { activePromo = {code, rate: codes[code]}; status.textContent = `${code} applied to selected products (${Math.round(codes[code]*100)}% demo discount).`; status.style.color = '#26734d'; }
+      renderCart();
+    }
+    function addBundleDeal(name, price, description) {
+      const existing = cart.find(item => item.name === name && item.size === 'Combo' && item.color === 'Bundle');
+      if (existing) existing.qty += 1;
+      else cart.push({name, price, size:'Combo', color:'Bundle', qty:1, selected:true, description});
+      renderCart(); openCartDrawer();
+    }
+    function openSizeAssistant() {
+      const modal = document.getElementById('size-assistant-backdrop');
+      if (!modal) return;
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeSizeAssistant(event) {
+      if (event && event.target && event.target.id !== 'size-assistant-backdrop') return;
+      const modal = document.getElementById('size-assistant-backdrop');
+      if (!modal) return;
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+    function showSizeTab(tab, button) {
+      document.querySelectorAll('.size-tab').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.size-tab-panel').forEach(el => el.classList.remove('active'));
+      if (button) button.classList.add('active');
+      const panel = document.getElementById('size-tab-' + tab);
+      if (panel) panel.classList.add('active');
+    }
+    function calculateAssistantBraSize() {
+      const under = parseFloat(document.getElementById('assistant-underbust').value);
+      const bust = parseFloat(document.getElementById('assistant-bust').value);
+      const result = document.getElementById('assistant-bra-result');
+      if (!under || !bust || under < 20 || bust < 20 || bust < under) {
+        result.textContent = 'Please enter valid underbust and bust measurements in inches.';
+        return;
+      }
+      const band = Math.ceil((under + 1) / 2) * 2;
+      const diff = Math.max(0, Math.round(bust - band));
+      const cups = ['AA','A','B','C','D','DD/E','DDD/F','G','H'];
+      const cup = cups[Math.min(diff, cups.length - 1)];
+      result.textContent = 'Approximate starting size: ' + band + cup + '. Please confirm against the specific product chart.';
+    }
+
+    function rememberRecentlyViewed(name, price, image) {
+      recentlyViewed = [{name, price, image}, ...recentlyViewed.filter(p=>p.name!==name)].slice(0,4);
+      localStorage.setItem('hssp_recent', JSON.stringify(recentlyViewed)); renderRecentlyViewed();
+    }
+    function renderRecentlyViewed() {
+      const section=document.getElementById('recently-viewed-section'), target=document.getElementById('recently-viewed');
+      if(!section || !target) return;
+      if(!recentlyViewed.length){section.style.display='none';return;}
+      section.style.display='block';
+      target.innerHTML=recentlyViewed.map(p=>`<article class="recent-card"><img src="${p.image}" alt="" style="width:100%;height:130px;object-fit:cover;border-radius:8px"><strong style="display:block;margin-top:7px">${p.name}</strong><p style="font-size:12px;margin-top:4px">PKR ${Number(p.price).toLocaleString()}</p></article>`).join('');
+    }
+    function submitReview(event) {
+      event.preventDefault();
+      const review={name:document.getElementById('review-name').value.trim(),rating:Number(document.getElementById('review-rating').value),text:document.getElementById('review-text').value.trim(),date:new Date().toLocaleDateString()};
+      const reviews=JSON.parse(localStorage.getItem('hssp_reviews')||'[]'); reviews.unshift(review); localStorage.setItem('hssp_reviews',JSON.stringify(reviews.slice(0,20))); renderReviews(); event.target.reset();
+      alert('Review saved on this device only. It is not published to other visitors.');
+    }
+    function renderReviews() {
+      const target=document.getElementById('review-list'); if(!target)return;
+      const reviews=JSON.parse(localStorage.getItem('hssp_reviews')||'[]');
+      target.innerHTML=reviews.length?reviews.map(r=>`<article class="review-card"><strong>${escapeHtml(r.name)}</strong><div class="stars">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</div><p>${escapeHtml(r.text)}</p><small>${escapeHtml(r.date)}</small></article>`).join(''):'<p style="font-size:12px;color:#76535f">No reviews saved on this device yet.</p>';
+    }
+    function escapeHtml(value) { return String(value).replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+
+    function renderCart() {
+      const container = document.getElementById('cart-items');
+      document.getElementById('cart-count').textContent = cart.reduce((sum, item) => sum + item.qty, 0);
+      const cartHeadCount = document.getElementById('cart-head-count');
+      if (cartHeadCount) cartHeadCount.textContent = `(${cart.length})`;
+      const selectedItems = getSelectedCartItems();
+      const selectedTotal = selectedItems.reduce((sum, item) => sum + item.price * item.qty, 0);
+      const discount = activePromo ? Math.round(selectedTotal * activePromo.rate) : 0;
+      const delivery = selectedItems.length === 0 || selectedTotal - discount >= FREE_DELIVERY_THRESHOLD ? 0 : DELIVERY_FEE;
+      document.getElementById('cart-total').textContent = 'PKR ' + selectedTotal.toLocaleString();
+      document.getElementById('cart-discount').textContent = 'PKR ' + discount.toLocaleString();
+      document.getElementById('cart-delivery').textContent = 'PKR ' + delivery.toLocaleString();
+      document.getElementById('cart-final-total').textContent = 'PKR ' + (selectedTotal - discount + delivery).toLocaleString();
+      document.getElementById('selected-summary').textContent = `${selectedItems.length} product${selectedItems.length === 1 ? '' : 's'} selected · ${selectedItems.reduce((sum, item) => sum + item.qty, 0)} item(s)`;
+      document.getElementById('cart-summary-top').textContent = selectedItems.length ? `${selectedItems.length} product${selectedItems.length === 1 ? '' : 's'} selected · ${selectedItems.reduce((sum, item) => sum + item.qty, 0)} item(s) in your cart` : 'Select the products you want to order.';
+      document.getElementById('buy-selected-btn').disabled = selectedItems.length === 0;
+      if (cart.length === 0) {
+        container.innerHTML = '<p style="color:#777; text-align:center; margin-top:30px;">Your cart is empty.</p>';
+        return;
+      }
+      container.innerHTML = cart.map((item, idx) => `
+        <div class="item-row">
+          <label class="cart-select-line"><input class="item-select" type="checkbox" ${item.selected ? 'checked' : ''} onchange="setCartItemSelected(${idx}, this.checked)"> Select for checkout</label>
+          <div class="item-row-header">
+            <h4>${item.name}</h4>
+            <span>PKR ${(item.price * item.qty).toLocaleString()}</span>
+          </div>
+          <p style="font-size:11px; color:#555;">Size: ${item.size}${item.cupSize ? " | Cup: " + item.cupSize : ""} | Color: ${item.color}</p>
+          <div class="qty-controls"><button onclick="changeCartQty(${idx}, -1)" aria-label="Decrease quantity">−</button><span>Qty: ${item.qty}</span><button onclick="changeCartQty(${idx}, 1)" aria-label="Increase quantity">+</button></div>
+          <div class="item-actions"><button class="btn-text danger" onclick="removeFromCart(${idx})">Remove</button></div>
+        </div>
+      `).join('');
+    }
+
+    function toggleFaq(button) {
+      const item = button.closest('.faq-item');
+      const open = item.classList.toggle('open');
+      button.setAttribute('aria-expanded', String(open));
+      const symbol = button.querySelector('span');
+      if (symbol) symbol.textContent = open ? '−' : '＋';
+    }
+
+    function renderWishlist() {
+      const container = document.getElementById('wishlist-items');
+      document.getElementById('wishlist-count').textContent = wishlist.length;
+      if (wishlist.length === 0) { container.innerHTML = '<div class="wishlist-empty"><span class="heart-icon" aria-hidden="true">♡</span><strong>Your wishlist is waiting</strong><p>Save your favourite looks here and come back to them any time.</p><a class="wishlist-shop" href="#collection" onclick="closeAllDrawers()">Explore Collection</a></div>'; return; }
+      container.innerHTML = wishlist.map((item, idx) => `
+        <div class="item-row">
+          <div class="item-row-header">
+            <h4>${item.name}</h4>
+            <span>PKR ${item.price.toLocaleString()}</span>
+          </div>
+          <p style="font-size:11px; color:#555;">Size: ${item.size}${item.cupSize ? " | Cup: " + item.cupSize : ""} | Color: ${item.color}</p>
+          <div class="item-actions">
+            <button class="btn-text" onclick="cart.push({...wishlist[${idx}], qty:1, selected:false}); wishlist.splice(${idx},1); renderWishlist(); renderCart(); toggleCart();">Move to Cart 🛒</button>
+            <button class="btn-text danger" onclick="removeFromWishlist(${idx})">Remove</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // The inventory-backed checkout implementation loads from inventory-store.js.
+    // No WhatsApp redirect is permitted as a fallback for customers.
+    async function checkoutCart() {
+      alert('Secure checkout is currently loading. Please refresh and try again.');
+    }
+    renderCart();
+    renderRecentlyViewed();
+    renderReviews();
+  
+
+
+let hssReelReturnFocus=null;
+function openBoutiqueReel(reel){
+  if(!reel || !/^\/uploads\/[a-f0-9-]+\.(mp4|webm)$/i.test(reel.url))return;
+  const viewer=document.getElementById('boutique-reel-viewer');
+  const player=document.getElementById('boutique-reel-player');
+  hssReelReturnFocus=document.activeElement;
+  document.querySelectorAll('.reel-card video').forEach(v=>v.pause());
+  document.getElementById('boutique-reel-title').textContent=reel.caption||'Watch Reel';
+  document.getElementById('boutique-reel-deal').textContent=reel.deal||'';
+  player.pause();player.src=reel.url;player.controls=true;player.muted=false;player.loop=false;
+  viewer.classList.add('is-open');viewer.setAttribute('aria-hidden','false');
+  player.play().catch(()=>{ /* Browser may require another user tap for sound; visible controls remain. */ });
+  player.focus();
+}
+function closeBoutiqueReel(){
+  const viewer=document.getElementById('boutique-reel-viewer');
+  const player=document.getElementById('boutique-reel-player');
+  if(!viewer.classList.contains('is-open'))return;
+  player.pause();player.removeAttribute('src');player.load();
+  viewer.classList.remove('is-open');viewer.setAttribute('aria-hidden','true');
+  document.querySelectorAll('.reel-card video').forEach(v=>{v.muted=true;v.play().catch(()=>{});});
+  if(hssReelReturnFocus?.focus)hssReelReturnFocus.focus();
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeBoutiqueReel();});
+
+
+
+(async function(){try{const response=await fetch('/api/homepage');if(!response.ok)return;const {homepage:h}=await response.json();
+ document.querySelectorAll('.brand-tagline,.hero-note').forEach(e=>e.textContent=h.tagline);
+ const hero=document.querySelector('section.hero');
+ if(hero&&h.bannerUrl&&/^\/uploads\/[a-f0-9-]+\.(jpg|png|webp)$/i.test(h.bannerUrl)){
+   hero.classList.add('custom-banner');
+   hero.style.backgroundImage='url("'+h.bannerUrl+'")';
+   hero.style.backgroundRepeat='no-repeat';
+   hero.style.backgroundSize='cover';
+   hero.style.backgroundPosition='center center';
+   hero.style.backgroundColor='#fff';
+   // Uploaded promotional graphics already carry typography; do not overlay hero copy.
+   const bannerLink=document.createElement('a');
+   bannerLink.href='#collection';bannerLink.className='custom-banner-link';
+   bannerLink.setAttribute('aria-label','Shop the collection');
+   hero.appendChild(bannerLink);
+ }
+ if(hero&&h.bannerHeading){const heading=hero.querySelector('h1');if(heading)heading.textContent=h.bannerHeading;}
+ const area=document.getElementById('video-reels'),grid=document.getElementById('managed-reels');
+ if(grid){
+   (Array.isArray(h.reels)?h.reels:[]).forEach((r,i)=>{
+     if(!/^\/uploads\/[a-f0-9-]+\.(mp4|webm)$/i.test(r.url))return;
+     const card=document.createElement('button');card.type='button';card.className='reel-card';card.setAttribute('aria-label','Watch reel with sound: '+(r.caption||'Video'));card.addEventListener('click',()=>openBoutiqueReel(r));
+     const v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='metadata';v.autoplay=true;v.loop=true;v.defaultMuted=true;v.setAttribute('muted','');v.setAttribute('autoplay','');v.setAttribute('loop','');v.controls=false;v.src=r.url;v.setAttribute('aria-hidden','true');v.tabIndex=-1;card.appendChild(v);
+     
+     const caption=document.createElement('div');caption.className='reel-caption';caption.textContent=[r.caption,r.deal].filter(Boolean).join(' — ')||'Watch Reel';card.appendChild(caption);grid.appendChild(card);v.play().catch(()=>{});
+   });
+   area.hidden=!grid.children.length;
+   const prev=document.getElementById('reels-prev'),next=document.getElementById('reels-next');
+   function updateArrows(){const hasOverflow=grid.scrollWidth>grid.clientWidth+2;prev.hidden=next.hidden=!hasOverflow;prev.disabled=grid.scrollLeft<=2;next.disabled=grid.scrollLeft+grid.clientWidth>=grid.scrollWidth-2;}
+   function slide(direction){const item=grid.querySelector('.reel-card');if(!item)return;const gap=parseFloat(getComputedStyle(grid).gap)||16;grid.scrollBy({left:direction*(item.getBoundingClientRect().width+gap),behavior:'smooth'});}
+   prev.addEventListener('click',()=>slide(-1));next.addEventListener('click',()=>slide(1));grid.addEventListener('scroll',updateArrows,{passive:true});window.addEventListener('resize',updateArrows);requestAnimationFrame(updateArrows);
+ }
+
+ }catch(e){console.warn('Homepage content unavailable',e)}})();
+
+
+/* Exchange center link is always visible even before JavaScript inventory loads. */

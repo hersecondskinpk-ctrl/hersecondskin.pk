@@ -1,360 +1,126 @@
-/**
- * Her Second Skin PK — Admin Dashboard Controller (js/admin.js)
- * Products, Inventory Adjustments, Orders, Sales Reports & Settings
- */
-'use strict';
 
-const $ = id => document.getElementById(id);
-let editingGallery = [];
-let editingVideos = [];
-const formatPKR = n => 'PKR ' + Number(n || 0).toLocaleString('en-PK');
-let products = [], orders = [], sales = [], movements = [], currentTab = 'overview', editingVariants = [];
-const CATS = { bras: 'Bras', panties: 'Panties', sets: 'Bra & Panty Sets', accessories: 'Accessories', 'body-shaper': 'Body Shaper', camisole: 'Camisole' };
-const STATUS = { pending: 'Pending', confirmed: 'Confirmed', processing: 'Processing', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
+const $=id=>document.getElementById(id);let editingGallery=[];let editingVideos=[];const formatPKR=n=>'PKR '+Number(n||0).toLocaleString('en-PK');let products=[],orders=[],sales=[],movements=[],currentTab='overview',editingVariants=[];const CATS={bras:'Bras',panties:'Panties',sets:'Bra & Panty Sets',accessories:'Accessories','body-shaper':'Body Shaper',camisole:'Camisole'};const STATUS={pending:'Pending',confirmed:'Confirmed',processing:'Processing',shipped:'Shipped',delivered:'Delivered',cancelled:'Cancelled'};
+async function api(url,options={}){const res=await fetch(url,{credentials:'same-origin',...options,headers:{...(options.body?{'Content-Type':'application/json'}:{}),...(options.headers||{})}});let data={};try{data=await res.json()}catch{}if(!res.ok)throw new Error(data.error||`Request failed (${res.status})`);return data}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function setMessage(id,msg,ok=false){$(id).textContent=msg;$(id).style.color=ok?'var(--green)':'var(--red)'}
+$('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-error').textContent='';$('login-btn').disabled=true;try{await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('login-user').value.trim(),password:$('login-pass').value})});await enterApp()}catch(err){$('login-error').textContent=err.message}finally{$('login-btn').disabled=false}});
+async function enterApp(){try{const me=await api('/api/auth/me');$('user-chip').textContent=me.username.toUpperCase();$('login-screen').classList.add('hidden');$('app-screen').classList.remove('hidden');await refreshAll()}catch(e){$('app-screen').classList.add('hidden');$('login-screen').classList.remove('hidden')}}
+async function logout(){try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}$('app-screen').classList.add('hidden');$('login-screen').classList.remove('hidden');$('login-pass').value=''}
+/* Responsive dashboard drawer: no backend/API behavior changes */
+function setAdminMenu(open){const app=document.getElementById('app-screen');const button=document.getElementById('admin-menu-toggle');app.classList.toggle('nav-open',!!open);button?.setAttribute('aria-expanded',String(!!open));document.body.style.overflow=open?'hidden':''}
+document.getElementById('admin-menu-toggle')?.addEventListener('click',()=>setAdminMenu(!document.getElementById('app-screen').classList.contains('nav-open')));
+document.getElementById('admin-drawer-backdrop')?.addEventListener('click',()=>setAdminMenu(false));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')setAdminMenu(false)});
+window.addEventListener('resize',()=>{if(window.innerWidth>780)setAdminMenu(false)});
+function showTab(tab){setAdminMenu(false);currentTab=tab;document.querySelectorAll('.tab-page').forEach(el=>el.classList.toggle('hidden',el.id!=='tab-'+tab));document.querySelectorAll('[data-tab]').forEach(el=>el.classList.toggle('active',el.dataset.tab===tab));if(tab==='overview')loadDashboard();if(tab==='products'){loadProducts()}if(tab==='homepage')loadHomepage();if(tab==='category-images')loadCategoryImages();if(tab==='orders')loadOrders();if(tab==='sales')loadSales();if(tab==='movements')loadMovements();if(tab==='reviews')loadReviews();if(tab==='overview')refreshReviewBadge()}
+/* HSS REVIEWS v1 */
+let adminReviews=[];
+async function refreshReviewBadge(){try{const d=await api('/api/reviews?status=pending');const b=$('rv-pending-badge');if(b)b.textContent=d.reviews.length?' ('+d.reviews.length+')':''}catch(e){}}
+async function loadReviews(){const st=$('review-filter').value;try{const d=await api('/api/reviews?status='+encodeURIComponent(st));adminReviews=d.reviews;$('reviews-table').innerHTML=adminReviews.length?`<table><thead><tr><th>Date</th><th>Product</th><th>Customer</th><th>Rating</th><th>Review</th><th>Status</th><th>Actions</th></tr></thead><tbody>${adminReviews.map(r=>`<tr><td>${new Date(r.date).toLocaleDateString()}</td><td>${esc(r.productName)}</td><td><strong>${esc(r.name)}</strong>${r.phone?`<br><small>${esc(r.phone)}</small>`:''}</td><td style="white-space:nowrap;color:#d9a21b">${'★'.repeat(r.rating)}<span style="color:#ddd">${'★'.repeat(5-r.rating)}</span></td><td style="max-width:320px">${r.title?`<strong>${esc(r.title)}</strong><br>`:''}${esc(r.text)}</td><td>${r.status==='approved'?'<strong style="color:#357451">Published</strong>':'<strong style="color:#b45309">Pending</strong>'}${r.verified?'<br><small>✔ Verified buyer</small>':''}</td><td style="white-space:nowrap"><button class="btn small" onclick="reviewSet('${r.id}',{status:'${r.status==='approved'?'pending':'approved'}'})">${r.status==='approved'?'Unpublish':'Publish'}</button> <button class="btn light small" onclick="reviewSet('${r.id}',{verified:${!r.verified}})">${r.verified?'Remove ✔':'Mark ✔'}</button> <button class="btn light small" onclick="reviewDelete('${r.id}')">Delete</button></td></tr>`).join('')}</tbody></table>`:'<p style="padding:18px;color:#777">No reviews here yet.</p>'}catch(e){$('reviews-table').innerHTML='<p style="padding:18px;color:#b42318">'+esc(e.message)+'</p>'}refreshReviewBadge()}
+async function openReviewForm(){if(!products.length){try{await loadProducts()}catch(e){}}$('rv-product').innerHTML=products.filter(p=>p.active).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');$('review-form-box').classList.toggle('hidden')}
+async function saveManualReview(ev){ev.preventDefault();$('rv-error').textContent='';try{await api('/api/reviews',{method:'POST',body:JSON.stringify({productId:$('rv-product').value,name:$('rv-name').value.trim(),rating:Number($('rv-rating').value),title:$('rv-title').value.trim(),text:$('rv-text').value.trim(),date:$('rv-date').value||undefined,verified:$('rv-verified').checked})});$('review-form').reset();$('review-form-box').classList.add('hidden');$('review-filter').value='approved';loadReviews()}catch(e){$('rv-error').textContent=e.message}}
+async function reviewSet(id,patch){try{await api('/api/reviews/'+id,{method:'PATCH',body:JSON.stringify(patch)});loadReviews()}catch(e){alert(e.message)}}
+async function reviewDelete(id){if(!confirm('Delete this review permanently?'))return;try{await api('/api/reviews/'+id,{method:'DELETE'});loadReviews()}catch(e){alert(e.message)}}
+/* end HSS REVIEWS v1 */
+document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
+async function refreshAll(){await Promise.allSettled([loadDashboard(),loadProducts(),loadOrders(),loadSales(),loadMovements()])}
+async function loadDashboard(){try{const d=await api('/api/dashboard');const c=d.counts;$('dashboard-stats').innerHTML=[['Active products',c.activeProducts,'products listed'],['Units in stock',c.unitsInStock,'across active variants'],['Open orders',c.openOrders,'not delivered/cancelled'],['Sales this month',formatPKR(c.monthSales),`${c.monthDeliveredOrders} delivered order(s)`],['Est. profit',formatPKR(c.monthEstimatedProfit),'before other expenses'],['Low stock',c.lowStockVariants,'variants with 1–3 units'],['Out of stock',c.outOfStockVariants,'active variants at zero'],['Collected',formatPKR(c.monthCollected),'including delivery fees']].map(x=>`<div class="stat"><div class="stat-label">${esc(x[0])}</div><div class="stat-value">${typeof x[1]==='number'&&x[1]>999?Number(x[1]).toLocaleString():esc(x[1])}</div><div class="stat-note">${esc(x[2])}</div></div>`).join('');$('recent-orders').innerHTML=d.recentOrders.length?`<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>${d.recentOrders.map(o=>`<tr><td><strong>${esc(o.order_number)}</strong><small>${new Date(o.created_at).toLocaleDateString()}</small></td><td>${esc(o.customer_name)}</td><td>${formatPKR(o.total)}</td><td><span class="pill ${o.status}">${STATUS[o.status]||esc(o.status)}</span></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">ابھی کوئی آرڈر موجود نہیں۔</div>';$('low-stock-list').innerHTML=d.lowStock.length?d.lowStock.map(v=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid #f2e8eb;padding:10px 0;font-size:12px"><span><b>${esc(v.productName)}</b><small style="display:block;color:var(--muted);margin-top:4px">${esc(v.color)} · ${esc(v.size)} · ${esc(v.sku)}</small></span><div style="display:flex;align-items:center;gap:8px"><b class="${v.stock===0?'metric-bad':'metric-warn'}">${v.stock} left</b><button type="button" class="btn outline small" style="padding:4px 9px;font-size:11px" onclick="editProduct('${v.productId}')">Edit</button></div></div>`).join(''):'<div class="empty">فی الحال کوئی کم اسٹاک والا variant نہیں۔</div>'}catch(e){toastError(e)}}
+async function loadProducts(){try{const d=await api('/api/products?admin=1');products=d.products;renderProductsTable();populateVariantSelect();}catch(e){toastError(e)}}
+function renderProductsTable(){const q=($('product-search')?.value||'').toLowerCase();const f=$('product-filter')?.value||'all';let items=products.filter(p=>{if(f==='inactive'&&p.active)return false;if(f!=='all'&&f!=='inactive'&&p.category!==f)return false;const hay=[p.name,p.description,p.category,...p.variants.map(v=>`${v.sku} ${v.color} ${v.size}`)].join(' ').toLowerCase();return hay.includes(q)});if(!items.length){$('products-table').innerHTML='<div class="empty">کوئی پروڈکٹ نہیں ملی۔ Add Product سے پہلی انوینٹری شامل کریں۔</div>';return}$('products-table').innerHTML=`<table><thead><tr><th>Product</th><th>Category</th><th>Price / Cost</th><th>Variants</th><th>Total stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>${items.map(p=>`<tr><td><div class="product-cell">${p.image_url?`<img class="thumb" src="${esc(p.image_url)}" alt="">`:'<div class="no-img">HSS</div>'}<div><strong>${esc(p.name)}</strong><small>${p.variants.filter(v=>v.active).length} active variant(s)</small></div></div></td><td>${esc(CATS[p.category]||p.category)}</td><td><strong>${formatPKR(p.price)}</strong><small>Cost ${formatPKR(p.costPrice)}</small></td><td>${p.variants.filter(v=>v.active).length}</td><td><strong>${p.variants.filter(v=>v.active).reduce((s,v)=>s+v.stock,0)}</strong></td><td><span class="pill ${p.active?'delivered':'cancelled'}">${p.active?'Active':'Archived'}</span></td><td><div class="tools"><button class="btn light small" onclick="editProduct('${p.id}')">Edit</button>${p.active?`<button class="btn danger small" onclick="archiveProduct('${p.id}')">Archive</button>`:''}</div></td></tr>`).join('')}</tbody></table>`}
+function populateVariantSelect(){const options=products.filter(p=>p.active).flatMap(p=>p.variants.filter(v=>v.active).map(v=>({id:v.id,label:`${p.name} · ${v.color} · ${v.size} · ${v.stock} left`,stock:v.stock})));$('adjust-variant').innerHTML=options.length?options.map(v=>`<option value="${v.id}">${esc(v.label)}</option>`).join(''):'<option value="">No variants</option>'}
+const HSS_SIZES=['22','31','32','34','36','38','40','42','44','46','48','50','52','54','58','S','M','L','XL','XXL','XXXL'];
+const HSS_CUPS=['','A','B','C','D','FF'];
+function variantOptions(list,val){return list.map(x=>`<option value="${esc(x)}" ${String(x)===String(val)?'selected':''}>${esc(x||'None')}</option>`).join('')}
+function initBulkChoices(){for(const [id,values] of [['bulk-sizes',HSS_SIZES],['bulk-cups',HSS_CUPS]]){$(id).innerHTML=values.map(v=>`<label style="display:inline-flex;gap:4px;align-items:center;margin:4px 8px 4px 0;font-size:12px"><input type="checkbox" value="${esc(v)}">${esc(v||'None')}</label>`).join('')}}
+function bulkAddVariants(){const color=$('bulk-colour').value.trim(),sizes=Array.from(document.querySelectorAll('#bulk-sizes input:checked')).map(x=>x.value),cups=Array.from(document.querySelectorAll('#bulk-cups input:checked')).map(x=>x.value),qty=Number($('bulk-qty').value),err=$('bulk-error');err.textContent='';if(!color||!sizes.length||!cups.length||!Number.isInteger(qty)||qty<0){err.textContent='Choose colour, at least one size and cup option, and a valid quantity.';return}const combos=sizes.flatMap(size=>cups.map(cupSize=>({color,size,cupSize})));const existing=new Set(Array.from(document.querySelectorAll('.variant-row')).map(r=>[r.querySelector('.v-color').value.trim().toLowerCase(),r.querySelector('.v-size').value,r.querySelector('.v-cup').value].join('|')));const newOnes=combos.filter(v=>!existing.has([v.color.toLowerCase(),v.size,v.cupSize].join('|')));if(document.querySelectorAll('.variant-row').length+newOnes.length>200){err.textContent='Maximum 200 variants per product.';return}newOnes.forEach(v=>addVariantRow({...v,stock:qty}));err.textContent=`Added ${newOnes.length} combinations; ${combos.length-newOnes.length} duplicates skipped.`;renderGalleryPreview()}
+function addVariantRow(v={}){const div=document.createElement('div');div.className='variant-row';const size=String(v.size||'');const cup=String(v.cupSize||v.cup_size||'');div.innerHTML=`<input aria-label="Colour" placeholder="Black" class="v-color" required value="${esc(v.color||'')}"><select aria-label="Size" class="v-size" required><option value="">Select Size</option>${variantOptions([...new Set([...HSS_SIZES,...(size?[size]:[])])],size)}</select><select aria-label="Cup Size" class="v-cup">${variantOptions([...new Set([...HSS_CUPS,...(cup?[cup]:[])])],cup)}</select><input aria-label="SKU" placeholder="Auto SKU" class="v-sku" value="${esc(v.sku||'')}"><input aria-label="Stock" type="number" min="0" step="1" class="v-stock" required value="${Number(v.stock)||0}"><button type="button" class="xbtn" title="Remove variant" onclick="this.closest('.variant-row').remove()">×</button><input type="hidden" class="v-id" value="${esc(v.id||'')}">`;$('variant-rows').appendChild(div)}
+/* HSS ADMIN PHOTOS v1 */
+let hssDrag=null;
+function hssColors(){const set=new Set();document.querySelectorAll('.variant-row .v-color').forEach(i=>{const v=i.value.trim();if(v)set.add(v)});editingGallery.forEach(g=>{if(g.color)set.add(g.color)});return Array.from(set)}
+function renderGalleryPreview(){const box=$('gallery-preview');if(!box)return;const cols=hssColors();
+box.innerHTML=editingGallery.map((im,i)=>`<div class="hss-thumb" draggable="true" data-i="${i}"><img src="${esc(im.url)}" alt="Photo ${i+1}"><span class="hss-badge${im._new?' new':''}">${i===0?'Featured':(im._new?'New':(i+1))}</span><button type="button" class="hss-x" onclick="removeGalleryImage(${i})" aria-label="Remove photo">×</button><select onchange="setGalleryColor(${i},this.value)" aria-label="Colour for photo ${i+1}"><option value="">Sab rang (shared)</option>${cols.map(c=>`<option value="${esc(c)}"${c===im.color?' selected':''}>${esc(c)}</option>`).join('')}</select>${i===0?'':`<button type="button" class="hss-mk" onclick="makeFeatured(${i})">Make Featured</button>`}</div>`).join('');
+box.querySelectorAll('.hss-thumb').forEach(el=>{el.addEventListener('dragstart',e=>{hssDrag=Number(el.dataset.i);el.classList.add('dragging');e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(hssDrag))}catch(_){}});el.addEventListener('dragend',()=>{hssDrag=null;box.querySelectorAll('.hss-thumb').forEach(x=>x.classList.remove('dragging','dropat'))});el.addEventListener('dragover',e=>{if(hssDrag===null)return;e.preventDefault();el.classList.add('dropat')});el.addEventListener('dragleave',()=>el.classList.remove('dropat'));el.addEventListener('drop',e=>{if(hssDrag===null)return;e.preventDefault();const to=Number(el.dataset.i);if(to!==hssDrag){const [m]=editingGallery.splice(hssDrag,1);editingGallery.splice(to,0,m)}hssDrag=null;renderGalleryPreview()})});
+const n=editingGallery.length;const note=$('image-note');if(note)note.textContent=n?`${n} / 20 photos · pehli photo main hai. Khenchkar tarteeb badlein.`:'Photo ko khenchkar aage-peeche kar sakte hain. Har photo ke neeche uska rang chun sakte hain (khali = sab rangon ke liye).'}
+function removeGalleryImage(i){editingGallery.splice(i,1);renderGalleryPreview()}
+function setGalleryColor(i,c){if(editingGallery[i])editingGallery[i].color=c}
+function makeFeatured(i){const [m]=editingGallery.splice(i,1);editingGallery.unshift(m);renderGalleryPreview()}
+async function hssAddFiles(list){const files=Array.from(list||[]).filter(f=>/^image\/(jpeg|png|webp)$/.test(f.type));const err=$('product-error');err.textContent='';if(!files.length&&list&&list.length){err.textContent='Sirf JPG, PNG ya WebP photos chalti hain.';return}
+for(const f of files){if(editingGallery.length>=20){err.textContent='Ek product ki zyada se zyada 20 photos ho sakti hain.';break}if(f.size>3*1024*1024){err.textContent=`"${f.name}" 3 MB se badi hai, isliye chhod di gayi.`;continue}try{editingGallery.push({url:await readDataUrl(f),color:'',isPrimary:false,_new:true})}catch(e){err.textContent=e.message}}renderGalleryPreview()}
+function hssInitPhotos(){const dz=$('hss-drop'),inp=$('p-gallery-files');if(!dz||!inp)return;dz.addEventListener('click',()=>inp.click());dz.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();inp.click()}});inp.addEventListener('change',async()=>{await hssAddFiles(inp.files);inp.value=''});['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('over')}));['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('over')}));dz.addEventListener('drop',e=>{if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length)hssAddFiles(e.dataTransfer.files)});document.addEventListener('input',e=>{const m=$('product-modal');if(e.target&&e.target.classList&&e.target.classList.contains('v-color')&&m&&!m.classList.contains('hidden'))renderGalleryPreview()})}
+hssInitPhotos();
+/* HSS ADMIN VIDEO v1 */
+function renderVideoPreview(){const box=$('video-preview');if(!box)return;box.innerHTML=editingVideos.map((v,i)=>`<div class="hss-vthumb"><video src="${esc(v._preview||v.url)}" controls preload="metadata" playsinline muted></video><div class="hss-vmeta"><span>${v._new?'Nayi video':'Saved video'}${v._name?' · '+esc(v._name):''}</span><button type="button" class="hss-vdel" title="Hatayein" onclick="removeVideo(${i})">×</button></div></div>`).join('')}
+function removeVideo(i){const v=editingVideos[i];if(v&&v._preview)URL.revokeObjectURL(v._preview);editingVideos.splice(i,1);$('product-error').textContent='';renderVideoPreview()}
+async function hssAddVideos(list){const err=$('product-error');err.textContent='';const files=Array.from(list||[]);for(const f of files){const okType=/^video\/(mp4|quicktime|webm)$/.test(f.type)||/\.(mp4|mov|webm)$/i.test(f.name);if(!okType){err.textContent=`"${f.name}" video nahi hai (sirf MP4, MOV ya WebM chalti hai).`;continue}if(editingVideos.length>=3){err.textContent='Ek product par zyada se zyada 3 videos ho sakti hain.';break}if(f.size>25*1024*1024){err.textContent=`"${f.name}" ${(f.size/1048576).toFixed(1)} MB hai - 25 MB se choti video chahiye, isliye chhod di gayi. Phone mein video ko chhota (compress) karke dobara daalein.`;continue}try{let url=await readDataUrl(f);if(!/^data:video\//.test(url)){const ext=(f.name.split('.').pop()||'').toLowerCase();const mime=ext==='mov'?'video/quicktime':ext==='webm'?'video/webm':'video/mp4';url=url.replace(/^data:[^;,]*/,'data:'+mime)}editingVideos.push({url,_new:true,_name:f.name,_preview:URL.createObjectURL(f)})}catch(e){err.textContent=e.message}}renderVideoPreview()}
+function hssInitVideos(){const dz=$('hss-vdrop'),inp=$('p-video-files');if(!dz||!inp)return;dz.addEventListener('click',()=>inp.click());dz.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();inp.click()}});inp.addEventListener('change',async()=>{await hssAddVideos(inp.files);inp.value=''});['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('over')}));['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('over')}));dz.addEventListener('drop',e=>{if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length)hssAddVideos(e.dataTransfer.files)})}
+hssInitVideos();
+/* HSS CATEGORY LINKS v1 */
+function hssRenderLinks(){const box=$('hss-links');if(!box)return;const base=location.origin;const items=[['Home','index.html'],['Bras','bras.html'],['Panties','panties.html'],['Sets','sets.html'],['Accessories','accessories.html'],['Body Shaper','body-shaper.html'],['Camisole','camisole.html']];box.innerHTML=items.map(([n,f])=>`<div class="hss-link"><b>${n}</b><input readonly value="${base}/${f}" onfocus="this.select()" aria-label="${n} link"><button type="button" class="btn light small" onclick="hssCopyLink(this)">Copy</button></div>`).join('')}
+async function hssCopyLink(btn){const v=btn.previousElementSibling.value;try{await navigator.clipboard.writeText(v)}catch(_){const i=btn.previousElementSibling;i.select();try{document.execCommand('copy')}catch(__){}}const old=btn.textContent;btn.textContent='Copied ✓';const m=$('hss-links-msg');if(m)m.textContent=location.hostname==='localhost'||location.hostname==='127.0.0.1'?'Dhyan rahe: yeh links abhi aapke apne computer ke hain. Website live hone ke baad inme asli domain aa jayega.':'';setTimeout(()=>btn.textContent=old,1500)}
+hssRenderLinks();
 
-async function api(url, options = {}) {
-  const res = await fetch(url, {
-    credentials: 'same-origin',
-    ...options,
-    headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {})
-    }
-  });
-  let data = {};
-  try { data = await res.json(); } catch {}
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
+function openProductModal(p=null){$('product-form').reset();$('product-id').value='';$('variant-rows').innerHTML='';$('p-cost').value=0;$('p-compare').value=0;$('p-image-url').value='';$('p-image-file').value='';$('p-gallery-files').value='';$('p-gallery-color').value='';editingGallery=[];editingVideos=[];renderVideoPreview();$('p-video-files').value='';$('image-note').textContent='آپ فائل اپلوڈ کر سکتے ہیں یا نیچے تصویر کا ویب لنک ڈال سکتے ہیں۔';$('product-error').textContent='';$('product-modal-heading').textContent=p?'Edit Product':'Add Product';if(p){$('product-id').value=p.id;$('p-name').value=p.name;$('p-category').value=p.category;$('p-price').value=p.price;$('p-cost').value=p.costPrice;$('p-compare').value=p.comparePrice||0;$('p-description').value=p.description;$('p-image-url').value=p.image_url||'';editingGallery=(p.images||[]).filter(im=>!String(im.id).startsWith('legacy-')).map(im=>({url:im.url,color:im.color||'',isPrimary:im.isPrimary}));editingVideos=(p.videos||[]).map(v=>({url:v.url}));renderVideoPreview();p.variants.filter(v=>v.active).forEach(v=>addVariantRow(v))}if(!$('variant-rows').children.length)addVariantRow({color:'Black',size:'36',stock:0});initBulkChoices();renderGalleryPreview();$('product-modal').classList.remove('hidden')}
+function closeModal(id){$(id).classList.add('hidden')}
+function editProduct(id){const p=products.find(p=>p.id===id);if(p)openProductModal(p)}
+async function archiveProduct(id){if(!confirm('Archive this product? It will stop appearing in the store but its order/sales history will remain.'))return;try{await api('/api/products/'+id,{method:'DELETE'});await loadProducts();await loadDashboard()}catch(e){alert(e.message)}}
+$('p-image-file').addEventListener('change',()=>{const f=$('p-image-file').files[0];$('image-note').textContent=f?`${f.name} · ${(f.size/1024/1024).toFixed(2)} MB`:'No file selected.'});
+$('product-form').addEventListener('submit',async e=>{e.preventDefault();$('product-error').textContent='';if(editingGallery.length>20){$('product-error').textContent='A product can have up to 20 photos.';return}if(editingVideos.length>3){$('product-error').textContent='A product can have up to 3 videos.';return}const variants=Array.from(document.querySelectorAll('.variant-row')).map(r=>({id:r.querySelector('.v-id').value||undefined,color:r.querySelector('.v-color').value.trim(),size:r.querySelector('.v-size').value.trim(),cupSize:r.querySelector('.v-cup').value,sku:r.querySelector('.v-sku').value.trim(),stock:Number(r.querySelector('.v-stock').value)}));let imageUrl=$('p-image-url').value.trim();try{const images=editingGallery.map((g,ix)=>({url:g.url,color:g.color||'',isPrimary:ix===0}));if(images.length)imageUrl=images[0].url;const body={name:$('p-name').value.trim(),category:$('p-category').value,price:Number($('p-price').value),costPrice:Number($('p-cost').value),comparePrice:Number($('p-compare').value||0),description:$('p-description').value.trim(),imageUrl,images,videos:editingVideos.map(v=>({url:v.url})),variants};const id=$('product-id').value;const result=await api(id?'/api/products/'+id:'/api/products',{method:id?'PATCH':'POST',body:JSON.stringify(body)});closeModal('product-modal');await Promise.all([loadProducts(),loadDashboard()]);alert(`Saved: ${result.product.name}`)}catch(err){$('product-error').textContent=err.message}});
+function readDataUrl(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(new Error('Unable to read file.'));r.readAsDataURL(file)})}
+$('adjust-mode').addEventListener('change',()=>{$('adjust-value-label').textContent=$('adjust-mode').value==='set'?'Exact stock quantity':'Quantity change (use − to remove)'});
+async function adjustStock(){const id=$('adjust-variant').value;if(!id)return setMessage('adjust-message','پہلے کوئی stock variant بنائیں۔');const n=Number($('adjust-value').value);if(!Number.isInteger(n))return setMessage('adjust-message','Quantity پوری عددی ہونی چاہیے۔');try{const body=$('adjust-mode').value==='set'?{mode:'set',stock:n,note:$('adjust-note').value}:{mode:'delta',delta:n,note:$('adjust-note').value};const r=await api('/api/variants/'+id+'/adjust',{method:'POST',body:JSON.stringify(body)});setMessage('adjust-message',`Stock updated. New quantity: ${r.stock}`,true);await Promise.all([loadProducts(),loadDashboard(),loadMovements()])}catch(e){setMessage('adjust-message',e.message)}}
+async function loadOrders(){try{const d=await api('/api/orders');orders=d.orders;renderOrdersTable()}catch(e){toastError(e)}}
+function renderOrdersTable(){let list=orders.slice();const q=($('order-search')?.value||'').toLowerCase(),status=$('order-filter')?.value||'all';if(status!=='all')list=list.filter(o=>o.status===status);if(q)list=list.filter(o=>[o.order_number,o.customer_name,o.phone,o.address].join(' ').toLowerCase().includes(q));if(!list.length){$('orders-table').innerHTML='<div class="empty">اس فلٹر میں کوئی آرڈر موجود نہیں۔ آرڈر آنے پر یہاں دکھائی دے گا۔</div>';return}$('orders-table').innerHTML=`<table><thead><tr><th>Order / Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Change status</th><th>Details</th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${esc(o.order_number)}</strong><small>${new Date(o.created_at).toLocaleString()}</small></td><td><strong>${esc(o.customer_name)}</strong><small>${esc(o.phone)}</small></td><td>${o.items.reduce((s,i)=>s+i.quantity,0)} unit(s)<small>${esc(o.source)}</small></td><td><strong>${formatPKR(o.total)}</strong><small>Items: ${formatPKR(o.subtotal)}</small></td><td><span class="pill ${o.status}">${STATUS[o.status]||o.status}</span></td><td><div class="tools"><select class="control" style="width:130px;padding:7px" id="status-${o.id}" ${['delivered','cancelled'].includes(o.status)?'disabled':''}>${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${o.status===k?'selected':''}>${v}</option>`).join('')}</select><button class="btn small" onclick="saveOrderStatus('${o.id}')" ${['delivered','cancelled'].includes(o.status)?'disabled':''}>Save</button></div></td><td><button class="btn light small" onclick="showOrderDetail('${o.id}')">View</button></td></tr>`).join('')}</tbody></table>`}
+async function saveOrderStatus(id){const status=$('status-'+id).value;let note='';if(status==='cancelled'&&!confirm('Cancel this order? Reserved stock will be added back.'))return;if(status==='delivered'&&!confirm('Mark as Delivered? This creates a Sales Record.'))return;try{await api('/api/orders/'+id+'/status',{method:'PATCH',body:JSON.stringify({status,note})});await Promise.all([loadOrders(),loadProducts(),loadDashboard(),loadSales(),loadMovements()]);}catch(e){alert(e.message)}}
+function showOrderDetail(id){const o=orders.find(x=>x.id===id);if(!o)return;const p=$('order-detail-panel');p.classList.remove('hidden');p.innerHTML=`<div class="panel-head"><h2>Order ${esc(o.order_number)}</h2><button class="btn light small" onclick="$('order-detail-panel').classList.add('hidden')">Close</button></div><div class="grid-two"><div><b>${esc(o.customer_name)}</b><p class="modal-help">${esc(o.phone)}<br>${esc(o.address)}</p><span class="pill ${o.status}">${STATUS[o.status]}</span></div><div><p class="modal-help">Subtotal: ${formatPKR(o.subtotal)}<br>Discount: ${formatPKR(o.discount)}<br>Delivery: ${formatPKR(o.delivery_fee)}<br><b>Total: ${formatPKR(o.total)}</b><br>Promo: ${esc(o.promo_code||'None')}<br>Source: ${esc(o.source)}</p></div></div><div class="table-wrap"><table style="min-width:0"><thead><tr><th>Product</th><th>SKU</th><th>Variant</th><th>Qty</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${o.items.map(i=>`<tr><td>${esc(i.product_name)}</td><td>${esc(i.sku)}</td><td>${esc(i.color)} / ${esc(i.size)}</td><td>${i.quantity}</td><td>${formatPKR(i.unit_price)}</td><td>${formatPKR(i.line_total)}</td></tr>`).join('')}</tbody></table></div><div id="wa-order-details" class="panel" style="margin-top:14px">Loading WhatsApp workflow...</div>`;loadWhatsAppOrder(id);p.scrollIntoView({behavior:'smooth',block:'start'})}
+async function loadWhatsAppOrder(id){const el=$('wa-order-details');if(!el)return;try{const d=await api('/api/orders/'+id+'/whatsapp');if(!el.isConnected)return;const w=d.workflow||{};el.innerHTML=`<h3>WhatsApp Automation — ${esc(w.stage||'Not started')}</h3><p class="modal-help">Verified phone: ${esc(w.phone||'—')}<br>Verified address: ${esc(w.address||'—')}</p><h3>Courier Dispatch (Step 5)</h3><div class="form-grid"><div class="field"><label>Courier Name</label><input id="wa-courier" placeholder="TCS" value="${esc(w.courier||'')}"></div><div class="field"><label>Tracking ID</label><input id="wa-tracking" value="${esc(w.tracking||'')}"></div><div class="field span2"><label>Official Tracking HTTPS URL</label><input id="wa-link" type="url" placeholder="https://..." value="${esc(w.tracking_link||'')}"></div><div class="field"><label>Dispatch Date</label><input id="wa-date" type="date" value="${esc(w.dispatch_date||new Date().toISOString().slice(0,10))}"></div></div><button class="btn" ${w.stage==='ready_to_pack'?'':'disabled'} onclick="sendCourierMessage('${id}')">Send Dispatch Notification</button><p class="file-note">Send only after handing parcel to courier. Requires configured Meta approved template.</p><h3>WhatsApp Timeline</h3>${d.events.map(e=>`<div class="file-note">${esc(e.event)} — ${esc(e.created_at)}</div>`).join('')||'<p>No events yet.</p>'}<h3>Message Status</h3>${d.messages.map(m=>`<div class="file-note">${esc(m.kind)}: ${esc(m.state)}${m.last_error?' — '+esc(m.last_error):''}</div>`).join('')||'<p>No messages scheduled.</p>'}`;}catch(e){el.textContent=e.message}}
+async function sendCourierMessage(id){const courier=$('wa-courier').value.trim(),tracking=$('wa-tracking').value.trim(),trackingLink=$('wa-link').value.trim(),dispatchDate=$('wa-date').value;if(!courier||!tracking||!trackingLink||!dispatchDate){alert('Fill courier, tracking ID, official tracking URL and date.');return}if(!confirm('Confirm parcel has been handed to the courier and send customer tracking notification?'))return;try{await api('/api/orders/'+id+'/dispatch',{method:'POST',body:JSON.stringify({courier,tracking,trackingLink,dispatchDate})});await loadWhatsAppOrder(id);alert('Dispatch notification queued. Check message status for delivery attempts.')}catch(e){alert(e.message)}}
+function addManualOrderLine(item={}){const div=document.createElement('div');div.className='order-line';div.innerHTML=`<select class="manual-product" required onchange="updateManualVariant(this)"><option value="">Choose product</option>${products.filter(p=>p.active).map(p=>`<option value="${p.id}" ${item.productId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select><select class="manual-variant" required><option value="">Choose variant</option></select><input class="manual-qty" type="number" min="1" max="99" value="${item.quantity||1}" required><button type="button" class="xbtn" onclick="this.parentElement.remove()">×</button>`;$('manual-order-lines').appendChild(div);updateManualVariant(div.querySelector('.manual-product'),item.variantId)}
+function updateManualVariant(el,variantId=''){const row=el.closest('.order-line');const p=products.find(p=>p.id===el.value);const sel=row.querySelector('.manual-variant');sel.innerHTML=p?'<option value="">Choose colour / size</option>'+p.variants.filter(v=>v.active).map(v=>`<option value="${v.id}" ${variantId===v.id?'selected':''} ${v.stock<1?'disabled':''}>${esc(v.color)} / ${esc(v.size)} — ${v.stock} left (${esc(v.sku)})</option>`).join(''):'<option value="">Choose variant</option>'}
+function openManualOrder(){$('manual-order-form').reset();$('manual-order-lines').innerHTML='';$('manual-order-error').textContent='';addManualOrderLine();$('manual-order-modal').classList.remove('hidden')}
+$('manual-order-form').addEventListener('submit',async e=>{e.preventDefault();$('manual-order-error').textContent='';const rows=Array.from(document.querySelectorAll('#manual-order-lines .order-line'));const items=rows.map(r=>({variantId:r.querySelector('.manual-variant').value,quantity:Number(r.querySelector('.manual-qty').value)}));if(items.some(i=>!i.variantId||!i.quantity)){ $('manual-order-error').textContent='ہر order item کے لیے product، variant اور quantity منتخب کریں۔';return}try{const body={customerName:$('m-name').value.trim(),phone:$('m-phone').value.trim(),address:$('m-address').value.trim(),items,promoCode:$('m-promo').value.trim(),notes:$('m-notes').value.trim()};const r=await api('/api/orders/manual',{method:'POST',body:JSON.stringify(body)});closeModal('manual-order-modal');await Promise.all([loadOrders(),loadProducts(),loadDashboard(),loadMovements()]);alert(`Order saved: ${r.order.order_number}\nStock has been reserved. Status: Pending.`)}catch(err){$('manual-order-error').textContent=err.message}});
+async function loadSales(){try{const q=new URLSearchParams();if($('sales-from').value)q.set('from',$('sales-from').value);if($('sales-to').value)q.set('to',$('sales-to').value);const d=await api('/api/sales?'+q);sales=d.sales;$('sales-stats').innerHTML=[['Delivered orders',d.totals.orders],['Merchandise sales',formatPKR(d.totals.merchandiseNet)],['Delivery collected',formatPKR(d.totals.delivery)],['Total collected',formatPKR(d.totals.collected)],['Estimated profit',formatPKR(d.totals.profit)]].map(x=>`<div class="stat"><div class="stat-label">${esc(x[0])}</div><div class="stat-value">${esc(x[1])}</div></div>`).join('');$('sales-table').innerHTML=sales.length?`<table><thead><tr><th>Sale date</th><th>Order #</th><th>Customer</th><th>Merchandise net</th><th>Delivery</th><th>Collected</th><th>Est. profit</th></tr></thead><tbody>${sales.map(s=>`<tr><td>${new Date(s.sold_at).toLocaleDateString()}</td><td><strong>${esc(s.order_number)}</strong></td><td>${esc(s.customer_name)}<small>${esc(s.phone)}</small></td><td>${formatPKR(s.merchandise_net)}</td><td>${formatPKR(s.delivery_fee)}</td><td><strong>${formatPKR(s.amount_collected)}</strong></td><td class="${s.estimated_profit<0?'metric-bad':'metric-good'}">${formatPKR(s.estimated_profit)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">ابھی کوئی Delivered آرڈر نہیں، اس لیے Sales Record خالی ہے۔</div>'}catch(e){toastError(e)}}
+function exportSalesCsv(){const rows=[['Sale date','Order #','Customer','Phone','Merchandise gross','Discount','Merchandise net','Delivery fee','Amount collected','Estimated cost','Estimated profit'],...sales.map(s=>[s.sold_at,s.order_number,s.customer_name,s.phone,s.merchandise_gross,s.discount,s.merchandise_net,s.delivery_fee,s.amount_collected,s.estimated_cost,s.estimated_profit])];const csv=rows.map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='HSSPK-Sales.csv';a.click();URL.revokeObjectURL(url)}
+async function loadMovements(){try{const d=await api('/api/stock/movements');movements=d.movements;$('movements-table').innerHTML=movements.length?`<table><thead><tr><th>Date/time</th><th>Product</th><th>SKU / Variant</th><th>Change</th><th>Reason</th><th>Reference / Note</th></tr></thead><tbody>${movements.map(m=>`<tr><td>${new Date(m.created_at).toLocaleString()}</td><td><strong>${esc(m.product_name||'Archived product')}</strong></td><td>${esc(m.sku||'—')}<small>${esc(m.color||'')} / ${esc(m.size||'')}</small></td><td class="${m.change_qty>=0?'metric-good':'metric-bad'}"><b>${m.change_qty>0?'+':''}${m.change_qty}</b></td><td>${esc(m.reason.replaceAll('_',' '))}</td><td>${esc(m.order_id?('Order: '+m.order_id.slice(0,8)+'… '):'')}${esc(m.note)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">اسٹاک کی کوئی تبدیلی ابھی محفوظ نہیں۔</div>'}catch(e){toastError(e)}}
+$('password-form').addEventListener('submit',async e=>{e.preventDefault();setMessage('password-message','');if($('new-pass').value!==$('confirm-pass').value)return setMessage('password-message','New passwords do not match.');try{await api('/api/auth/password',{method:'POST',body:JSON.stringify({currentPassword:$('current-pass').value,newPassword:$('new-pass').value})});setMessage('password-message','Password updated. Please sign in again with your new password.',true);setTimeout(()=>logout(),1200)}catch(e){setMessage('password-message',e.message)}});
+function toastError(e){console.error(e);if(e.message.toLowerCase().includes('sign in')||e.message.toLowerCase().includes('signed')){logout();return}alert(e.message)}
+// Default report date range: current month through today.
+const today=new Date(),ymd=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;$('sales-from').value=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-01`;$('sales-to').value=ymd(today);
+api('/api/auth/me').then(()=>enterApp()).catch(()=>{});
+
+let homeReels=[];
+
+const CATEGORY_IMAGES_LABELS={bras:'Bras',panties:'Panties',sets:'Sets',accessories:'Accessories','body-shaper':'Body Shaper',camisole:'Camisole'};
+let categoryImageData={};
+async function loadCategoryImages(){
+  try{const d=await api('/api/category-images');categoryImageData=d.images||{};
+  $('category-image-rows').innerHTML=Object.entries(CATEGORY_IMAGES_LABELS).map(([id,label])=>`<div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid #eadde0"><img id="cat-img-${id}" src="${categoryImageData[id]||''}" alt="${label} preview" style="width:90px;height:76px;object-fit:cover;border-radius:9px;${categoryImageData[id]?'':'display:none'}"><div style="flex:1;min-width:190px"><strong>${label}</strong><div class="field"><input type="file" id="cat-upload-${id}" accept="image/jpeg,image/png,image/webp"></div></div><button class="btn small" type="button" onclick="saveCategoryPhoto('${id}',false)">Save Photo</button><button class="btn light small" type="button" onclick="saveCategoryPhoto('${id}',true)">Restore Default</button></div>`).join('');
+  }catch(e){$('category-image-message').textContent='Error: '+e.message;}
 }
+async function saveCategoryPhoto(category,remove){const msg=$('category-image-message');msg.textContent='Saving '+CATEGORY_IMAGES_LABELS[category]+'...';try{
+ const f=$('cat-upload-'+category).files[0];if(!remove&&!f)throw Error('Choose a photo first.');if(f&&f.size>8*1024*1024)throw Error('Photo must be 8 MB or less.');
+ const body={category,remove};if(!remove)body.imageFile=await fileAsData(f);
+ await api('/api/admin/category-images',{method:'POST',body:JSON.stringify(body)});await loadCategoryImages();msg.textContent='Category photo updated.';
+ }catch(e){msg.textContent='Error: '+e.message;}}
 
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function fileAsData(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Could not read media file'));reader.readAsDataURL(file)})}
+async function loadHomepage(){try{const d=await api('/api/homepage'),h=d.homepage;$('home-tagline').value=h.tagline;$('home-banner-heading').value=h.bannerHeading||'';$('home-banner-current').textContent=h.bannerUrl?'Current banner: '+h.bannerUrl:'Using default banner';homeReels=h.reels||[];renderHomeReels()}catch(e){$('home-message').textContent=e.message}}
+function renderHomeReels(){$('home-reels-list').innerHTML=homeReels.map((r,i)=>`<div class="panel" style="padding:12px"><p>Reel ${i+1}: ${esc(r.url)}</p><div class="field"><label>Caption</label><input maxlength="100" value="${esc(r.caption||'')}" oninput="homeReels[${i}].caption=this.value"></div><div class="field"><label>Deal text</label><input maxlength="140" value="${esc(r.deal||'')}" oninput="homeReels[${i}].deal=this.value"></div><button class="btn danger small" onclick="homeReels.splice(${i},1);renderHomeReels()">Remove reel</button></div>`).join('')||'<p class="muted">No reels uploaded yet.</p>'}
+async function saveHomepage(){const msg=$('home-message');msg.textContent='Saving...';try{const banner=$('home-banner').files[0],reel=$('home-reel-file').files[0];if(banner&&banner.size>8*1024*1024)throw Error('Banner must be 8 MB or less');if(reel&&reel.size>25*1024*1024)throw Error('Reel must be 25 MB or less');const data={tagline:$('home-tagline').value,bannerHeading:$('home-banner-heading').value,removeBanner:$('home-remove-banner').checked,reels:homeReels,reelCaption:$('home-reel-caption').value,reelDeal:$('home-reel-deal').value};if(banner)data.bannerFile=await fileAsData(banner);if(reel)data.reelFile=await fileAsData(reel);await api('/api/admin/homepage',{method:'POST',body:JSON.stringify(data)});msg.textContent='Homepage updated successfully.';$('home-banner').value='';$('home-reel-file').value='';$('home-remove-banner').checked=false;await loadHomepage()}catch(e){msg.textContent='Error: '+e.message}}
+
+
+
+// HSS Exchange workflow admin panel; no automatic refunds or external messaging.
+let exchangeRows=[],exchangeStatuses={},exchangeTransitions={};let exchangeSelected='';
+const originalShowTab=showTab;
+showTab=function(tab){originalShowTab(tab);if(tab==='exchanges')loadExchanges();};
+async function loadExchanges(){try{const d=await api('/api/exchanges');exchangeRows=d.exchanges||[];exchangeStatuses=d.statuses||{};exchangeTransitions=d.transitions||{};renderExchangeTable();if(exchangeSelected)showExchangeDetail(exchangeSelected);}catch(e){$('exchange-table').textContent=e.message;}}
+function renderExchangeTable(){const filter=$('exchange-filter')?.value||'all',rows=exchangeRows.filter(x=>filter==='all'||x.status===filter);$('exchange-table').innerHTML=rows.length?`<table><thead><tr><th>Exchange / Date</th><th>Order / Customer</th><th>Product / Reason</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows.map(x=>`<tr><td><strong>${esc(x.number)}</strong><small>${new Date(x.createdAt).toLocaleString()}</small></td><td>${esc(x.orderNumber)}<small>${esc(x.customerName)} · ${esc(x.phone)}</small></td><td>${esc(x.product)}<small>${esc(x.reason)}</small></td><td><span class="pill">${esc(x.statusLabel)}</span></td><td><button class="btn small" onclick="showExchangeDetail('${x.id}')">Review</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty">No exchange requests in this category.</div>';}
+function showExchangeDetail(id){const x=exchangeRows.find(x=>x.id===id);if(!x)return;exchangeSelected=id;const options=(exchangeTransitions[x.status]||[]).map(v=>`<option value="${esc(v)}">${esc(exchangeStatuses[v])}</option>`).join('');let variants=[];for(const p of products)for(const v of p.variants||[])if(v.active!==false&&v.active!==0)variants.push(`<option value="${esc(v.id)}" ${x.replacementVariantId===v.id?'selected':''}>${esc(p.name)} / ${esc(v.color)} / ${esc(v.size)} / ${esc(v.cupSize||'N/A')} — ${esc(v.stock)} left</option>`);
+const complaintList=(x.complaints||[]).map(c=>`<div class="panel" style="padding:10px;margin:8px 0"><b>${esc(c.status)}</b><p>${esc(c.details)}</p>${c.response?`<p><b>Response:</b> ${esc(c.response)}</p>`:`<textarea id="complaint-text-${c.id}" class="control" maxlength="1500" placeholder="Written complaint decision / reason"></textarea><button type="button" class="btn small" onclick="respondExchangeComplaint('${c.id}')">Send Written Response</button>`}</div>`).join('');
+const evidence=(x.evidence||[]).map(e=>`<a href="${esc(e.url)}" target="_blank" rel="noopener">View evidence photo</a>`).join(' · ');
+$('exchange-detail').classList.remove('hidden');$('exchange-detail').innerHTML=`<div class="panel-head"><h2>${esc(x.number)} · ${esc(x.statusLabel)}</h2><button class="btn light small" onclick="$('exchange-detail').classList.add('hidden')">Close</button></div><div class="grid-two"><div><p><b>${esc(x.customerName)}</b><br>${esc(x.orderNumber)} · ${esc(x.phone)}<br>${esc(x.address)}</p><p>${esc(x.product)} · ${esc(x.sku)} · ${esc(x.color)} / ${esc(x.size)} × ${x.quantity}</p><p><b>Reason:</b> ${esc(x.reason)}<br><b>Issue:</b> ${esc(x.description)}<br><b>Reported delivery:</b> ${esc(x.deliveryDate)}</p><p>${evidence||'No evidence photos'}</p></div><div><p><b>Replacement reserved:</b> ${x.replacementReserved?'Yes':'No'}<br><b>Original inspected restock:</b> ${x.originalRestocked?'Yes':'No'}<br><b>Refund amount:</b> ${formatPKR(x.refundAmount)}<br><b>Courier:</b> ${esc(x.courier||'Not set')}<br><b>Tracking:</b> ${esc(x.trackingCode||'Not set')}</p></div></div><h3>Customer Complaints</h3>${complaintList||'<p class="modal-help">No complaints</p>'}<h3>Status History</h3><div class="modal-help">${x.events.map(ev=>`${esc(ev.status)} · ${new Date(ev.created_at).toLocaleString()} ${ev.public_note?' — '+esc(ev.public_note):''}`).join('<br>')}</div>${options?`<form id="exchange-action-form" onsubmit="saveExchangeStatus(event,'${x.id}')"><div class="form-grid"><div class="field"><label>Next Status</label><select class="control" id="ex-status">${options}</select></div><div class="field"><label>Replacement SKU / variant (before Final Approval)</label><select class="control" id="ex-replacement"><option value="">No replacement selected</option>${variants.join('')}</select></div><div class="field"><label>Courier Name</label><input id="ex-courier" value="${esc(x.courier||'')}" maxlength="120"></div><div class="field"><label>Tracking Number</label><input id="ex-tracking-code" value="${esc(x.trackingCode||'')}" maxlength="120"></div><div class="field span2"><label>Courier Tracking URL (https://)</label><input id="ex-tracking-url" type="url" value="${esc(x.trackingUrl||'')}" maxlength="500"></div><div class="field"><label>Approved refund amount (PKR) — paid manually</label><input id="ex-refund" type="number" min="0" step="1" value="${Number(x.refundAmount||0)}"></div><div class="field"><label>Original returned stock</label><label><input id="ex-restock" type="checkbox" ${x.originalRestocked?'disabled':''}> Inspected and safe to resell (one-time restock)</label></div><div class="field span2"><label>Customer-visible reason / update</label><textarea id="ex-public-note" maxlength="500" placeholder="Required when rejecting. Explain next steps."></textarea></div><div class="field span2"><label>Private internal note (not visible to customer)</label><textarea id="ex-private-note" maxlength="1500" placeholder="Inspection result, internal reference..."></textarea></div></div><p class="error" id="ex-error"></p><button class="btn" type="submit">Save Status and Tracking</button></form>`:'<p class="notice">This request has reached a final status.</p>'}`;
+$('exchange-detail').scrollIntoView({block:'start',behavior:'smooth'});
 }
-
-function setMessage(id, msg, ok = false) {
-  const el = $(id);
-  if (!el) return;
-  el.textContent = msg;
-  el.style.color = ok ? 'var(--green)' : 'var(--red)';
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  $('login-form')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    $('login-error').textContent = '';
-    $('login-btn').disabled = true;
-    try {
-      await api('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username: $('login-user').value.trim(), password: $('login-pass').value })
-      });
-      await enterApp();
-    } catch (err) {
-      $('login-error').textContent = err.message;
-    } finally {
-      $('login-btn').disabled = false;
-    }
-  });
-
-  document.getElementById('admin-menu-toggle')?.addEventListener('click', () => {
-    setAdminMenu(!document.getElementById('app-screen').classList.contains('nav-open'));
-  });
-  document.getElementById('admin-drawer-backdrop')?.addEventListener('click', () => setAdminMenu(false));
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') setAdminMenu(false); });
-  window.addEventListener('resize', () => { if (window.innerWidth > 780) setAdminMenu(false); });
-
-  document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
-
-  api('/api/auth/me').then(()=>enterApp()).catch(()=>{});
-});
-
-async function enterApp() {
-  try {
-    const me = await api('/api/auth/me');
-    if ($('user-chip')) $('user-chip').textContent = me.username.toUpperCase();
-    $('login-screen').classList.add('hidden');
-    $('app-screen').classList.remove('hidden');
-    await refreshAll();
-  } catch (e) {
-    $('app-screen').classList.add('hidden');
-    $('login-screen').classList.remove('hidden');
-  }
-}
-
-async function logout() {
-  try { await api('/api/auth/logout', { method: 'POST', body: '{}' }); } catch {}
-  $('app-screen').classList.add('hidden');
-  $('login-screen').classList.remove('hidden');
-  if ($('login-pass')) $('login-pass').value = '';
-}
-
-function setAdminMenu(open) {
-  const app = document.getElementById('app-screen');
-  const button = document.getElementById('admin-menu-toggle');
-  if (app) app.classList.toggle('nav-open', !!open);
-  button?.setAttribute('aria-expanded', String(!!open));
-  document.body.style.overflow = open ? 'hidden' : '';
-}
-
-function showTab(tab) {
-  setAdminMenu(false);
-  currentTab = tab;
-  document.querySelectorAll('.tab-page').forEach(el => el.classList.toggle('hidden', el.id !== 'tab-' + tab));
-  document.querySelectorAll('[data-tab]').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
-  if (tab === 'overview') loadDashboard();
-  if (tab === 'products') loadProducts();
-  if (tab === 'homepage') loadHomepage();
-  if (tab === 'category-images') loadCategoryImages();
-  if (tab === 'orders') loadOrders();
-  if (tab === 'promos') loadPromos();
-  if (tab === 'sales') loadSales();
-  if (tab === 'movements') loadMovements();
-  if (tab === 'reviews') loadReviews();
-  if (tab === 'exchanges') loadExchanges();
-}
-
-async function refreshAll() {
-  await Promise.allSettled([loadDashboard(), loadProducts(), loadOrders(), loadSales(), loadMovements()]);
-}
-
-// ----------------------------------------------------
-// DASHBOARD & ANALYTICS
-// ----------------------------------------------------
-async function loadDashboard() {
-  try {
-    const d = await api('/api/dashboard');
-    const c = d.counts;
-    $('dashboard-stats').innerHTML = [
-      ['Active products', c.activeProducts, 'products listed'],
-      ['Units in stock', c.unitsInStock, 'across active variants'],
-      ['Open orders', c.openOrders, 'not delivered/cancelled'],
-      ['Sales this month', formatPKR(c.monthSales), `${c.monthDeliveredOrders} delivered order(s)`],
-      ['Est. profit', formatPKR(c.monthEstimatedProfit), 'before other expenses'],
-      ['Low stock', c.lowStockVariants, 'variants with 1–3 units'],
-      ['Out of stock', c.outOfStockVariants, 'active variants at zero'],
-      ['Collected', formatPKR(c.monthCollected), 'including delivery fees']
-    ].map(x => `<div class="stat"><div class="stat-label">${esc(x[0])}</div><div class="stat-value">${typeof x[1] === 'number' && x[1] > 999 ? Number(x[1]).toLocaleString() : esc(x[1])}</div><div class="stat-note">${esc(x[2])}</div></div>`).join('');
-
-    $('recent-orders').innerHTML = d.recentOrders.length ? `<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>${d.recentOrders.map(o => `<tr><td><strong>${esc(o.order_number)}</strong><small>${new Date(o.created_at).toLocaleDateString()}</small></td><td>${esc(o.customer_name)}</td><td>${formatPKR(o.total)}</td><td><span class="pill ${o.status}">${STATUS[o.status] || esc(o.status)}</span></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">ابھی کوئی آرڈر موجود نہیں۔</div>';
-
-    $('low-stock-list').innerHTML = d.lowStock.length ? d.lowStock.map(v => `<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #f2e8eb;padding:10px 0;font-size:12px"><span><b>${esc(v.productName)}</b><small style="display:block;color:var(--muted);margin-top:4px">${esc(v.color)} · ${esc(v.size)} · ${esc(v.sku)}</small></span><b class="${v.stock === 0 ? 'metric-bad' : 'metric-warn'}">${v.stock} left</b></div>`).join('') : '<div class="empty">فی الحال کوئی کم اسٹاک والا variant نہیں۔</div>';
-  } catch (e) {
-    toastError(e);
-  }
-}
-
-// ----------------------------------------------------
-// PRODUCTS & INVENTORY
-// ----------------------------------------------------
-async function loadProducts() {
-  try {
-    const d = await api('/api/products?admin=1');
-    products = d.products;
-    renderProductsTable();
-    populateVariantSelect();
-  } catch (e) {
-    toastError(e);
-  }
-}
-
-function renderProductsTable() {
-  const q = ($('product-search')?.value || '').toLowerCase();
-  const f = $('product-filter')?.value || 'all';
-  let items = products.filter(p => {
-    if (f === 'inactive' && p.active) return false;
-    if (f !== 'all' && f !== 'inactive' && p.category !== f) return false;
-    const hay = [p.name, p.description, p.category, ...p.variants.map(v => `${v.sku} ${v.color} ${v.size}`)].join(' ').toLowerCase();
-    return hay.includes(q);
-  });
-  if (!items.length) {
-    $('products-table').innerHTML = '<div class="empty">کوئی پروڈکٹ نہیں ملی۔ Add Product سے پہلی انوینٹری شامل کریں۔</div>';
-    return;
-  }
-  $('products-table').innerHTML = `<table><thead><tr><th>Product</th><th>Category</th><th>Price / Cost</th><th>Variants</th><th>Total stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>${items.map(p => `<tr><td><div class="product-cell">${p.image_url ? `<img class="thumb" src="${esc(p.image_url)}" alt="">` : '<div class="no-img">HSS</div>'}<div><strong>${esc(p.name)}</strong><small>${p.variants.filter(v => v.active).length} active variant(s)</small></div></div></td><td>${esc(CATS[p.category] || p.category)}</td><td><strong>${formatPKR(p.price)}</strong><small>Cost ${formatPKR(p.costPrice)}</small></td><td>${p.variants.filter(v => v.active).length}</td><td><strong>${p.variants.filter(v => v.active).reduce((s, v) => s + v.stock, 0)}</strong></td><td><span class="pill ${p.active ? 'delivered' : 'cancelled'}">${p.active ? 'Active' : 'Archived'}</span></td><td><div class="tools"><button class="btn light small" onclick="editProduct('${p.id}')">Edit</button>${p.active ? `<button class="btn danger small" onclick="archiveProduct('${p.id}')">Archive</button>` : ''}</div></td></tr>`).join('')}</tbody></table>`;
-}
-
-function populateVariantSelect() {
-  const options = products.filter(p => p.active).flatMap(p => p.variants.filter(v => v.active).map(v => ({ id: v.id, label: `${p.name} · ${v.color} · ${v.size} · ${v.stock} left`, stock: v.stock })));
-  if ($('adjust-variant')) {
-    $('adjust-variant').innerHTML = options.length ? options.map(v => `<option value="${v.id}">${esc(v.label)}</option>`).join('') : '<option value="">No variants</option>';
-  }
-}
-
-const HSS_SIZES = ['22', '31', '32', '34', '36', '38', '40', '42', '44', '46', '48', '50', '52', '54', '58', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
-const HSS_CUPS = ['', 'A', 'B', 'C', 'D', 'FF'];
-
-function variantOptions(list, val) {
-  return list.map(x => `<option value="${esc(x)}" ${String(x) === String(val) ? 'selected' : ''}>${esc(x || 'None')}</option>`).join('');
-}
-
-function addVariantRow(v = {}) {
-  const div = document.createElement('div');
-  div.className = 'variant-row';
-  const size = String(v.size || '');
-  const cup = String(v.cupSize || v.cup_size || '');
-  div.innerHTML = `<input aria-label="Colour" placeholder="Black" class="v-color" required value="${esc(v.color || '')}"><select aria-label="Size" class="v-size" required><option value="">Select Size</option>${variantOptions([...new Set([...HSS_SIZES, ...(size ? [size] : [])])], size)}</select><select aria-label="Cup Size" class="v-cup">${variantOptions([...new Set([...HSS_CUPS, ...(cup ? [cup] : [])])], cup)}</select><input aria-label="SKU" placeholder="Auto SKU" class="v-sku" value="${esc(v.sku || '')}"><input aria-label="Stock" type="number" min="0" step="1" class="v-stock" required value="${Number(v.stock) || 0}"><button type="button" class="xbtn" title="Remove variant" onclick="this.closest('.variant-row').remove()">×</button><input type="hidden" class="v-id" value="${esc(v.id || '')}">`;
-  $('variant-rows')?.appendChild(div);
-}
-
-function openProductModal(p = null) {
-  $('product-form')?.reset();
-  $('product-id').value = '';
-  $('variant-rows').innerHTML = '';
-  $('p-cost').value = 0;
-  $('p-compare').value = 0;
-  $('p-image-url').value = '';
-  editingGallery = [];
-  editingVideos = [];
-  renderVideoPreview();
-  $('product-error').textContent = '';
-  $('product-modal-heading').textContent = p ? 'Edit Product' : 'Add Product';
-
-  if (p) {
-    $('product-id').value = p.id;
-    $('p-name').value = p.name;
-    $('p-category').value = p.category;
-    $('p-price').value = p.price;
-    $('p-cost').value = p.costPrice;
-    $('p-compare').value = p.comparePrice || 0;
-    $('p-description').value = p.description;
-    $('p-image-url').value = p.image_url || '';
-    editingGallery = (p.images || []).filter(im => !String(im.id).startsWith('legacy-')).map(im => ({ url: im.url, color: im.color || '', isPrimary: im.isPrimary }));
-    editingVideos = (p.videos || []).map(v => ({ url: v.url }));
-    renderVideoPreview();
-    p.variants.filter(v => v.active).forEach(v => addVariantRow(v));
-  }
-  if (!$('variant-rows').children.length) addVariantRow({ color: 'Black', size: '36', stock: 0 });
-  renderGalleryPreview();
-  $('product-modal')?.classList.remove('hidden');
-}
-
-function closeModal(id) {
-  $(id)?.classList.add('hidden');
-}
-
-function editProduct(id) {
-  const p = products.find(p => p.id === id);
-  if (p) openProductModal(p);
-}
-
-async function archiveProduct(id) {
-  if (!confirm('Archive this product? It will stop appearing in the store but its order/sales history will remain.')) return;
-  try {
-    await api('/api/products/' + id, { method: 'DELETE' });
-    await loadProducts();
-    await loadDashboard();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-// ----------------------------------------------------
-// ORDERS MANAGEMENT
-// ----------------------------------------------------
-async function loadOrders() {
-  try {
-    const d = await api('/api/orders');
-    orders = d.orders;
-    renderOrdersTable();
-  } catch (e) {
-    toastError(e);
-  }
-}
-
-function renderOrdersTable() {
-  let list = orders.slice();
-  const q = ($('order-search')?.value || '').toLowerCase();
-  const status = $('order-filter')?.value || 'all';
-  if (status !== 'all') list = list.filter(o => o.status === status);
-  if (q) list = list.filter(o => [o.order_number, o.customer_name, o.phone, o.address].join(' ').toLowerCase().includes(q));
-
-  if (!list.length) {
-    $('orders-table').innerHTML = '<div class="empty">اس فلٹر میں کوئی آرڈر موجود نہیں۔ آرڈر آنے پر یہاں دکھائی دے گا۔</div>';
-    return;
-  }
-  $('orders-table').innerHTML = `<table><thead><tr><th>Order / Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Change status</th></tr></thead><tbody>${list.map(o => `<tr><td><strong>${esc(o.order_number)}</strong><small>${new Date(o.created_at).toLocaleString()}</small></td><td><strong>${esc(o.customer_name)}</strong><small>${esc(o.phone)}</small></td><td>${o.items.reduce((s, i) => s + i.quantity, 0)} unit(s)<small>${esc(o.source)}</small></td><td><strong>${formatPKR(o.total)}</strong><small>Items: ${formatPKR(o.subtotal)}</small></td><td><span class="pill ${o.status}">${STATUS[o.status] || o.status}</span></td><td><div class="tools"><select class="control" style="width:130px;padding:7px" id="status-${o.id}" ${['delivered', 'cancelled'].includes(o.status) ? 'disabled' : ''}>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select><button class="btn small" onclick="saveOrderStatus('${o.id}')" ${['delivered', 'cancelled'].includes(o.status) ? 'disabled' : ''}>Save</button></div></td></tr>`).join('')}</tbody></table>`;
-}
-
-async function saveOrderStatus(id) {
-  const status = $('status-' + id).value;
-  if (status === 'cancelled' && !confirm('Cancel this order? Reserved stock will be added back.')) return;
-  if (status === 'delivered' && !confirm('Mark as Delivered? This creates a Sales Record.')) return;
-  try {
-    await api('/api/orders/' + id + '/status', { method: 'PATCH', body: JSON.stringify({ status, note: '' }) });
-    await Promise.all([loadOrders(), loadProducts(), loadDashboard(), loadSales(), loadMovements()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-// ----------------------------------------------------
-// EXCHANGES MANAGEMENT
-// ----------------------------------------------------
-let exchangeRows = [], exchangeStatuses = {}, exchangeTransitions = {};
-async function loadExchanges() {
-  try {
-    const d = await api('/api/exchanges');
-    exchangeRows = d.exchanges || [];
-    exchangeStatuses = d.statuses || {};
-    exchangeTransitions = d.transitions || {};
-    renderExchangeTable();
-  } catch (e) {
-    if ($('exchange-table')) $('exchange-table').textContent = e.message;
-  }
-}
-
-function renderExchangeTable() {
-  const filter = $('exchange-filter')?.value || 'all';
-  const rows = exchangeRows.filter(x => filter === 'all' || x.status === filter);
-  if ($('exchange-table')) {
-    $('exchange-table').innerHTML = rows.length ? `<table><thead><tr><th>Exchange / Date</th><th>Order / Customer</th><th>Product / Reason</th><th>Status</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.number)}</strong><small>${new Date(x.createdAt).toLocaleString()}</small></td><td>${esc(x.orderNumber)}<small>${esc(x.customerName)} · ${esc(x.phone)}</small></td><td>${esc(x.product)}<small>${esc(x.reason)}</small></td><td><span class="pill">${esc(x.statusLabel)}</span></td></tr>`).join('')}</tbody></table>` : '<div class="empty">No exchange requests in this category.</div>';
-  }
-}
-
-// ----------------------------------------------------
-// SALES & MOVEMENTS
-// ----------------------------------------------------
-async function loadSales() {
-  try {
-    const q = new URLSearchParams();
-    if ($('sales-from')?.value) q.set('from', $('sales-from').value);
-    if ($('sales-to')?.value) q.set('to', $('sales-to').value);
-    const d = await api('/api/sales?' + q);
-    sales = d.sales;
-    if ($('sales-stats')) {
-      $('sales-stats').innerHTML = [
-        ['Delivered orders', d.totals.orders],
-        ['Merchandise sales', formatPKR(d.totals.merchandiseNet)],
-        ['Delivery collected', formatPKR(d.totals.delivery)],
-        ['Total collected', formatPKR(d.totals.collected)],
-        ['Estimated profit', formatPKR(d.totals.profit)]
-      ].map(x => `<div class="stat"><div class="stat-label">${esc(x[0])}</div><div class="stat-value">${esc(x[1])}</div></div>`).join('');
-    }
-  } catch (e) {
-    toastError(e);
-  }
-}
-
-async function loadMovements() {
-  try {
-    const d = await api('/api/stock/movements');
-    movements = d.movements;
-    if ($('movements-table')) {
-      $('movements-table').innerHTML = movements.length ? `<table><thead><tr><th>Date/time</th><th>Product</th><th>SKU / Variant</th><th>Change</th><th>Reason</th></tr></thead><tbody>${movements.map(m => `<tr><td>${new Date(m.created_at).toLocaleString()}</td><td><strong>${esc(m.product_name || 'Archived')}</strong></td><td>${esc(m.sku || '—')}</td><td class="${m.change_qty >= 0 ? 'metric-good' : 'metric-bad'}"><b>${m.change_qty > 0 ? '+' : ''}${m.change_qty}</b></td><td>${esc(m.reason.replaceAll('_', ' '))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">اسٹاک کی کوئی تبدیلی ابھی محفوظ نہیں۔</div>';
-    }
-  } catch (e) {
-    toastError(e);
-  }
-}
-
-function toastError(e) {
-  console.error(e);
-  if (e.message.toLowerCase().includes('sign in') || e.message.toLowerCase().includes('signed')) {
-    logout();
-    return;
-  }
-  alert(e.message);
-}
-
-function renderGalleryPreview() {}
-function renderVideoPreview() {}
+async function saveExchangeStatus(ev,id){ev.preventDefault();const status=$('ex-status').value;const body={status,replacementVariantId:$('ex-replacement').value,courier:$('ex-courier').value,trackingCode:$('ex-tracking-code').value,trackingUrl:$('ex-tracking-url').value,refundAmount:Number($('ex-refund').value||0),restockOriginal:$('ex-restock').checked,publicNote:$('ex-public-note').value,privateNote:$('ex-private-note').value};if(body.restockOriginal&&!confirm('Confirm returned product is unused, unworn and safe for resale?'))return;if(status==='refunded'&&!confirm('This records a refund as processed. Have you actually made and confirmed the payment?'))return;
+try{await api('/api/exchanges/'+id+'/status',{method:'PATCH',body:JSON.stringify(body)});await Promise.all([loadExchanges(),loadProducts(),loadMovements()]);}catch(err){$('ex-error').textContent=err.message;}}
+async function respondExchangeComplaint(id){const v=$('complaint-text-'+id)?.value||'';try{await api('/api/exchanges/complaints/'+id,{method:'PATCH',body:JSON.stringify({response:v})});await loadExchanges()}catch(err){alert(err.message)}}
+setInterval(()=>{if(currentTab==='exchanges'&&!document.hidden)loadExchanges();},30000);
