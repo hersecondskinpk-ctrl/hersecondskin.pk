@@ -1,10 +1,6 @@
-data/*.sqlite
-data/*.sqlite-shm
-data/*.sqlite-wal
-data/INITIAL-ADMIN-LOGIN.txt
-uploads/*
-!uploads/README-KEEP.txt
-backups/
-scratch_test_data/
+node_modules/
 .env
-*.bak
+data/
+scratch_*/
+scripts/*.ps1
+*.log
