@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const zlib = require('node:zlib');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.HSS_DATA_DIR || path.join(ROOT, 'data');
@@ -46,7 +47,7 @@ function saveHomepageMedia(input,kind){
   const file=crypto.randomUUID()+'.'+ext;fs.writeFileSync(path.join(UPLOAD_DIR,file),bytes,{flag:'wx'});return '/uploads/'+file;
 }
 const db = new DatabaseSync(DB_PATH);
-db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL; PRAGMA cache_size = -64000; PRAGMA temp_store = MEMORY;');
 db.exec('CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 db.exec(`
 CREATE TABLE IF NOT EXISTS admin_users (
@@ -190,9 +191,31 @@ const uid = () => crypto.randomUUID();
 const money = n => Math.max(0, Math.round(Number(n) || 0));
 const cleanText = (value, max = 500) => String(value ?? '').trim().slice(0, max);
 const json = (res, status, data, extraHeaders = {}) => {
-  const body = JSON.stringify(data);
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
-  res.end(body);
+  const raw = Buffer.from(JSON.stringify(data), 'utf8');
+  const accept = (res.req && res.req.headers ? res.req.headers['accept-encoding'] : '') || '';
+  if (accept.includes('gzip') && raw.length > 512) {
+    const zipped = zlib.gzipSync(raw, { level: 6 });
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Encoding': 'gzip',
+      'Content-Length': zipped.length,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Vary': 'Accept-Encoding',
+      ...extraHeaders
+    });
+    res.end(zipped);
+  } else {
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': raw.length,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Vary': 'Accept-Encoding',
+      ...extraHeaders
+    });
+    res.end(raw);
+  }
 };
 const bad = (res, status, message) => json(res, status, { error: message });
 const safeEqual = (a, b) => {
@@ -529,7 +552,25 @@ function saveProduct(data, productId = null) {
   } catch(e) { db.exec('ROLLBACK'); throw e; }
 }
 function staticMime(ext) {
-  return ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.mp4':'video/mp4','.mov':'video/quicktime','.webm':'video/webm','.svg':'image/svg+xml','.ico':'image/x-icon','.txt':'text/plain; charset=utf-8'})[ext.toLowerCase()] || 'application/octet-stream';
+  return ({
+    '.html':'text/html; charset=utf-8',
+    '.js':'text/javascript; charset=utf-8',
+    '.css':'text/css; charset=utf-8',
+    '.json':'application/json; charset=utf-8',
+    '.png':'image/png',
+    '.jpg':'image/jpeg',
+    '.jpeg':'image/jpeg',
+    '.webp':'image/webp',
+    '.mp4':'video/mp4',
+    '.mov':'video/quicktime',
+    '.webm':'video/webm',
+    '.svg':'image/svg+xml',
+    '.ico':'image/x-icon',
+    '.woff':'font/woff',
+    '.woff2':'font/woff2',
+    '.ttf':'font/ttf',
+    '.txt':'text/plain; charset=utf-8'
+  })[ext.toLowerCase()] || 'application/octet-stream';
 }
 function serveFile(req,res,relative) {
   const file = String(relative).startsWith('uploads'+path.sep) ? path.resolve(UPLOAD_DIR, String(relative).slice(('uploads'+path.sep).length)) : path.resolve(ROOT,relative);
@@ -539,7 +580,15 @@ function serveFile(req,res,relative) {
   fs.stat(file,(err,stat)=>{
     if (err || !stat.isFile()) { res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'});res.end('Not found');return; }
     const ext=path.extname(file).toLowerCase();
-    const headers={'Content-Type':staticMime(ext),'X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin','Cache-Control':ext==='.html'?'no-cache':'public, max-age=3600'};
+    const isCompressible = ['.html','.css','.js','.json','.svg','.txt'].includes(ext);
+    const cacheControl = ext === '.html' ? 'no-cache' : 'public, max-age=86400, stale-while-revalidate=604800';
+    const headers={
+      'Content-Type':staticMime(ext),
+      'X-Content-Type-Options':'nosniff',
+      'Referrer-Policy':'strict-origin-when-cross-origin',
+      'Cache-Control':cacheControl,
+      'Vary':'Accept-Encoding'
+    };
     const isVideo=['.mp4','.mov','.webm'].includes(ext);
     if (isVideo) headers['Accept-Ranges']='bytes';
     const range=isVideo&&req.headers.range?/^bytes=(\d*)-(\d*)$/.exec(req.headers.range):null;
@@ -550,6 +599,13 @@ function serveFile(req,res,relative) {
       end=Math.min(end,stat.size-1);
       res.writeHead(206,{...headers,'Content-Range':`bytes ${start}-${end}/${stat.size}`,'Content-Length':end-start+1});
       fs.createReadStream(file,{start,end}).pipe(res);return;
+    }
+    const accept = req.headers['accept-encoding'] || '';
+    if (isCompressible && accept.includes('gzip') && stat.size > 256) {
+      headers['Content-Encoding'] = 'gzip';
+      res.writeHead(200, headers);
+      fs.createReadStream(file).pipe(zlib.createGzip({ level: 6 })).pipe(res);
+      return;
     }
     res.writeHead(200,{...headers,'Content-Length':stat.size});
     fs.createReadStream(file).pipe(res);
