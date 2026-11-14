@@ -312,7 +312,80 @@ function closeModal(id){$(id).classList.add('hidden')}
 function editProduct(id){const p=products.find(p=>p.id===id);if(p)openProductModal(p)}
 async function archiveProduct(id){if(!confirm('Archive this product? It will stop appearing in the store but its order/sales history will remain.'))return;try{await api('/api/products/'+id,{method:'DELETE'});await loadProducts();await loadDashboard()}catch(e){alert(e.message)}}
 $('p-image-file').addEventListener('change',()=>{const f=$('p-image-file').files[0];$('image-note').textContent=f?`${f.name} · ${(f.size/1024/1024).toFixed(2)} MB`:'No file selected.'});
-$('product-form').addEventListener('submit',async e=>{e.preventDefault();$('product-error').textContent='';if(editingGallery.length>20){$('product-error').textContent='A product can have up to 20 photos.';return}if(editingVideos.length>3){$('product-error').textContent='A product can have up to 3 videos.';return}const variants=Array.from(document.querySelectorAll('.variant-row')).map(r=>({id:r.querySelector('.v-id').value||undefined,color:r.querySelector('.v-color').value.trim(),size:r.querySelector('.v-size').value.trim(),cupSize:r.querySelector('.v-cup').value,sku:r.querySelector('.v-sku').value.trim(),stock:Number(r.querySelector('.v-stock').value)}));let imageUrl=$('p-image-url').value.trim();try{const images=editingGallery.map((g,ix)=>({url:g.url,color:g.color||'',isPrimary:ix===0}));if(images.length)imageUrl=images[0].url;const body={name:$('p-name').value.trim(),category:$('p-category').value,price:Number($('p-price').value),costPrice:Number($('p-cost').value),comparePrice:Number($('p-compare').value||0),description:$('p-description').value.trim(),imageUrl,images,videos:editingVideos.map(v=>({url:v.url})),variants};const id=$('product-id').value;const result=await api(id?'/api/products/'+id:'/api/products',{method:id?'PATCH':'POST',body:JSON.stringify(body)});closeModal('product-modal');await Promise.all([loadProducts(),loadDashboard()]);alert(`Saved: ${result.product.name}`)}catch(err){$('product-error').textContent=err.message}});
+$('product-form').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const btn = $('save-product-btn');
+  const errBox = $('product-error');
+  if (errBox) errBox.textContent = '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Saving product...';
+  }
+  try {
+    if (editingGallery.length > 20) {
+      throw new Error('A product can have up to 20 photos.');
+    }
+    if (editingVideos.length > 3) {
+      throw new Error('A product can have up to 3 videos.');
+    }
+    const variantRows = Array.from(document.querySelectorAll('.variant-row'));
+    if (!variantRows.length) {
+      throw new Error('Please add at least one color/size variant.');
+    }
+    const variants = variantRows.map(r => ({
+      id: r.querySelector('.v-id')?.value || undefined,
+      color: (r.querySelector('.v-color')?.value || '').trim(),
+      size: (r.querySelector('.v-size')?.value || '').trim(),
+      cupSize: r.querySelector('.v-cup')?.value || '',
+      sku: (r.querySelector('.v-sku')?.value || '').trim(),
+      stock: Number(r.querySelector('.v-stock')?.value) || 0
+    }));
+
+    for (let i = 0; i < variants.length; i++) {
+      if (!variants[i].color) throw new Error(`Row ${i + 1}: Please enter a colour.`);
+      if (!variants[i].size) throw new Error(`Row ${i + 1}: Please select a size.`);
+    }
+
+    let imageUrl = ($('p-image-url')?.value || '').trim();
+    const images = editingGallery.map((g, ix) => ({ url: g.url, color: g.color || '', isPrimary: ix === 0 }));
+    if (images.length) imageUrl = images[0].url;
+
+    const body = {
+      name: ($('p-name')?.value || '').trim(),
+      category: $('p-category')?.value,
+      price: Number($('p-price')?.value) || 0,
+      costPrice: Number($('p-cost')?.value) || 0,
+      comparePrice: Number($('p-compare')?.value) || 0,
+      description: ($('p-description')?.value || '').trim(),
+      imageUrl,
+      images,
+      videos: editingVideos.map(v => ({ url: v.url })),
+      variants
+    };
+
+    const id = $('product-id')?.value;
+    const result = await api(id ? '/api/products/' + id : '/api/products', {
+      method: id ? 'PATCH' : 'POST',
+      body: JSON.stringify(body)
+    });
+
+    closeModal('product-modal');
+    await Promise.all([loadProducts(), loadDashboard()]);
+    showAdminToast(`✓ Saved: ${result.product.name}`);
+    alert(`Product Saved Successfully!\n\n"${result.product.name}"`);
+  } catch(err) {
+    console.error('Save product error:', err);
+    if (errBox) errBox.textContent = err.message;
+    showAdminToast(`❌ ${err.message}`);
+    alert(`Could not save product:\n\n${err.message}`);
+    if (errBox) errBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Save Product';
+    }
+  }
+});
 function readDataUrl(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(new Error('Unable to read file.'));r.readAsDataURL(file)})}
 $('adjust-mode').addEventListener('change',()=>{$('adjust-value-label').textContent=$('adjust-mode').value==='set'?'Exact stock quantity':'Quantity change (use − to remove)'});
 async function adjustStock(){const id=$('adjust-variant').value;if(!id)return setMessage('adjust-message','پہلے کوئی stock variant بنائیں۔');const n=Number($('adjust-value').value);if(!Number.isInteger(n))return setMessage('adjust-message','Quantity پوری عددی ہونی چاہیے۔');try{const body=$('adjust-mode').value==='set'?{mode:'set',stock:n,note:$('adjust-note').value}:{mode:'delta',delta:n,note:$('adjust-note').value};const r=await api('/api/variants/'+id+'/adjust',{method:'POST',body:JSON.stringify(body)});setMessage('adjust-message',`Stock updated. New quantity: ${r.stock}`,true);await Promise.all([loadProducts(),loadDashboard(),loadMovements()])}catch(e){setMessage('adjust-message',e.message)}}

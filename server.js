@@ -280,8 +280,16 @@ function requireAdmin(req, res) {
 function originAllowed(req) {
   const origin = req.headers.origin;
   if (!origin) return true;
-  const host = req.headers.host;
-  try { const u = new URL(origin); return u.host === host; } catch { return false; }
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase();
+  try {
+    const u = new URL(origin);
+    const originHost = u.host.toLowerCase();
+    if (originHost === host) return true;
+    if (u.hostname === host.split(':')[0]) return true;
+    if (['localhost', '127.0.0.1'].includes(u.hostname) && ['localhost', '127.0.0.1'].includes(host.split(':')[0])) return true;
+    if (u.hostname.endsWith('.fly.dev') && host.endsWith('.fly.dev')) return true;
+    return false;
+  } catch { return false; }
 }
 async function readJson(req, maxBytes = MAX_BODY_BYTES) {
   let size = 0; const chunks = [];
@@ -449,31 +457,50 @@ function saveProduct(data, productId = null) {
   let imageUrl = rawImage.startsWith('data:') ? rawImage : cleanText(rawImage, 1000);
   const price = money(data.price);
   const costPrice = money(data.costPrice ?? data.cost_price);
-  const comparePrice = money(data.comparePrice ?? data.compare_price);
+  const rawCompare = money(data.comparePrice ?? data.compare_price);
+  const comparePrice = (rawCompare > price) ? rawCompare : 0;
   if (!name || !CATEGORIES.has(category)) { const e=new Error('Product name and a valid category are required.');e.status=400;throw e; }
   if (price < 1) { const e=new Error('Selling price must be at least PKR 1.');e.status=400;throw e; }
-  if (costPrice > price) { /* allowed intentionally; can reflect a loss */ }
-  if (comparePrice && comparePrice <= price) { const e=new Error('Original price must be higher than the selling price (or leave it 0 for no discount).');e.status=400;throw e; }
   if (imageUrl.startsWith('data:')) {
-    const match = imageUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+    const match = imageUrl.match(/^data:(image\/(?:jpeg|png|webp|jpg));base64,([A-Za-z0-9+/=]+)$/i);
     if (!match) { const e=new Error('Image must be JPG, PNG or WebP.');e.status=400;throw e; }
     const buffer = Buffer.from(match[2],'base64');
-    if (!buffer.length || buffer.length > 3*1024*1024) { const e=new Error('Image must be no larger than 3 MB.');e.status=413;throw e; }
-    const ext = match[1]==='image/jpeg'?'jpg':match[1]==='image/png'?'png':'webp';
+    if (!buffer.length || buffer.length > 8*1024*1024) { const e=new Error('Image must be no larger than 8 MB.');e.status=413;throw e; }
+    const ext = match[1].toLowerCase().includes('png')?'png':match[1].toLowerCase().includes('webp')?'webp':'jpg';
     const nameOnDisk = `${crypto.randomUUID()}.${ext}`;
     fs.writeFileSync(path.join(UPLOAD_DIR,nameOnDisk),buffer,{flag:'wx'});
     imageUrl = `/uploads/${nameOnDisk}`;
-  } else if (imageUrl && !imageUrl.startsWith('/uploads/') && !/^https?:\/\//i.test(imageUrl)) {
-    const e=new Error('Image URL must be an https/http URL or an uploaded image.');e.status=400;throw e;
+  } else if (imageUrl && !imageUrl.startsWith('/uploads/') && !imageUrl.startsWith('/') && !/^https?:\/\//i.test(imageUrl)) {
+    imageUrl = '/' + imageUrl;
   }
   if (!Array.isArray(data.variants) || !data.variants.length || data.variants.length > 200) { const e=new Error('Add at least one colour/size stock variant.');e.status=400;throw e; }
-  const variants = data.variants.map(v=>({ id:cleanText(v.id,80), color:cleanText(v.color,80), size:cleanText(v.size,80), cupSize:cleanText(v.cupSize||'',12).toUpperCase(), sku:cleanText(v.sku,80), stock:Math.floor(Number(v.stock)) }))
-    .map(v=>({...v,sku:v.sku || skuFor(category)}));
-  for (const v of variants) {
-    if (!v.color || !v.size || !['','A','B','C','D','FF'].includes(v.cupSize) || !Number.isInteger(v.stock) || v.stock < 0) { const e=new Error('Every variant needs a colour, size and stock amount (0 or more).');e.status=400;throw e; }
+  const rawVariants = data.variants.map(v => {
+    let cup = cleanText(v.cupSize || '', 12).toUpperCase();
+    if (['NONE', 'N/A', '-', '0', 'NULL'].includes(cup)) cup = '';
+    return {
+      id: cleanText(v.id, 80),
+      color: cleanText(v.color, 80),
+      size: cleanText(v.size, 80),
+      cupSize: cup,
+      sku: cleanText(v.sku, 80),
+      stock: Math.max(0, Math.floor(Number(v.stock) || 0))
+    };
+  }).map(v => ({ ...v, sku: v.sku || skuFor(category) }));
+  for (let i = 0; i < rawVariants.length; i++) {
+    const v = rawVariants[i];
+    if (!v.color || !v.size) { const e=new Error(`Variant ${i+1}: Colour and Size are required.`);e.status=400;throw e; }
   }
-  if (new Set(variants.map(v=>[v.color.toLowerCase(),v.size.toUpperCase(),v.cupSize].join('|'))).size !== variants.length) { const e=new Error('Duplicate colour / size / cup combination.');e.status=400;throw e; }
-  if (new Set(variants.map(v=>v.sku.toLowerCase())).size !== variants.length) { const e=new Error('Each variant SKU must be unique within the product.');e.status=400;throw e; }
+  const seenCombos = new Map();
+  const variants = [];
+  for (const v of rawVariants) {
+    const key = [v.color.toLowerCase(), v.size.toUpperCase(), v.cupSize].join('|');
+    if (seenCombos.has(key)) {
+      seenCombos.get(key).stock += v.stock;
+    } else {
+      seenCombos.set(key, v);
+      variants.push(v);
+    }
+  }
   const t=nowIso(); const id=productId || uid();
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -529,9 +556,11 @@ function saveProduct(data, productId = null) {
       let current=null;
       if (variantId) current = db.prepare('SELECT * FROM variants WHERE id=? AND product_id=?').get(variantId,id);
       if (!current) variantId=uid(); else keep.add(variantId);
-      const sku = v.sku;
-      const collision = db.prepare('SELECT id FROM variants WHERE sku=? AND id<>?').get(sku,variantId);
-      if (collision) { const e=new Error(`SKU ${sku} is already assigned to another variant.`);e.status=409;throw e; }
+      let sku = v.sku;
+      let collision = db.prepare('SELECT id FROM variants WHERE sku=? AND id<>?').get(sku,variantId);
+      if (collision) {
+        sku = `${sku}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+      }
       if (current) {
         const difference = v.stock-Number(current.stock);
         db.prepare('UPDATE variants SET sku=?,color=?,size=?,cup_size=?,stock=?,active=1,updated_at=? WHERE id=?').run(sku,v.color,v.size,v.cupSize,v.stock,t,variantId);
